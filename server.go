@@ -19,63 +19,51 @@ type Server interface {
 	// Start server
 	Start() error
 
-	SetDefaultDB(name string)
 	SetAPIMiddleware(middleware ...gin.HandlerFunc)
-	SetPort(port string)
-	SetLimit(limit string)
 }
 
 type server struct {
+	// Server fields
 	router    *gin.Engine
 	apiRouter *gin.RouterGroup
-	port      string
+	address   string
 
+	// Mongo fields
 	mongoClientOpts *options.ClientOptions
 	mongoClient     *mongo.Client
-	dbName          string
-	resLimit        string
+	defaultDB       string
+	findLimit       string
+	findMaxLimit    string
 }
 
 // Create a new server
 // Must pass in Mongo Client Options
-// Gin router is optional, if null will use default engine
-func NewServer(mongoClientOpts *options.ClientOptions, router *gin.Engine) Server {
+func NewServer(mongoClientOpts *options.ClientOptions, option *Option) Server {
 
-	if router == nil {
-		router = gin.Default()
-	}
+	router := option.Router
 
 	// Create api route group
 	apiRouter := router.Group("/api")
+
+	// Convert limits to string
+	findLimit := strconv.Itoa(option.FindLimit)
+	findMaxLimit := strconv.Itoa(option.FindMaxLimit)
 
 	return &server{
 		mongoClientOpts: mongoClientOpts,
 		router:          router,
 		apiRouter:       apiRouter,
-		resLimit:        "1000",
-		port:            "8080",
+		address:         option.Address,
+		defaultDB:       option.DefaultDB,
+		findLimit:       findLimit,
+		findMaxLimit:    findMaxLimit,
 	}
-}
-
-// Sets a default database to use
-func (s *server) SetDefaultDB(name string) {
-	s.dbName = name
 }
 
 // Sets any middleware funcs for /api routes
 // Example use would be any authorization
 func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
 	s.apiRouter.Use(middleware...)
-}
-
-// Sets a default port to use for api server
-func (s *server) SetPort(port string) {
-	s.port = port
-}
-
-// Sets a default port to use for api server
-func (s *server) SetLimit(limit string) {
-	s.resLimit = limit
 }
 
 // Start new server
@@ -110,7 +98,7 @@ func (s *server) Start() error {
 	s.createRoutes()
 
 	// Start router, this will block until error occurs
-	err = s.router.Run(s.port)
+	err = s.router.Run(s.address)
 
 	return err
 }
@@ -135,9 +123,9 @@ func (s *server) createRoutes() {
 func (s *server) getDatabases(c *gin.Context) {
 
 	// If user set a default database, only return that
-	if s.dbName != "" {
+	if s.defaultDB != "" {
 		res := bson.M{
-			"Databases": []string{s.dbName},
+			"Databases": []string{s.defaultDB},
 		}
 
 		c.JSON(http.StatusOK, res)
@@ -163,7 +151,7 @@ func (s *server) getCollections(c *gin.Context) {
 
 	var dbName string
 	// If user didnt set a default db, check to see if one was passed
-	if s.dbName == "" {
+	if s.defaultDB == "" {
 		var ok bool
 		dbName, ok = c.GetQuery("database")
 		if !ok {
@@ -171,7 +159,7 @@ func (s *server) getCollections(c *gin.Context) {
 			return
 		}
 	} else {
-		dbName = s.dbName
+		dbName = s.defaultDB
 	}
 
 	collNames, err := s.mongoClient.Database(dbName).ListCollectionNames(c.Request.Context(), bson.M{})
@@ -193,7 +181,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 
 	// If user didn't set a default db, check to see if one was passed
 	var dbName string
-	if s.dbName == "" {
+	if s.defaultDB == "" {
 		var ok bool
 		dbName, ok = ctx.GetQuery("database")
 		if !ok {
@@ -201,7 +189,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 			return
 		}
 	} else {
-		dbName = s.dbName
+		dbName = s.defaultDB
 	}
 
 	// Get collection name, return error if one isnt passed
@@ -212,7 +200,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	}
 
 	// Get limit, if none was passed default to default value
-	limitString := ctx.DefaultQuery("limit", s.resLimit)
+	limitString := ctx.DefaultQuery("limit", s.findLimit)
 	limit, err := strconv.Atoi(limitString)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
@@ -253,7 +241,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 
 	// If user didn't set a default db, check to see if one was passed
 	var dbName string
-	if s.dbName == "" {
+	if s.defaultDB == "" {
 		var ok bool
 		dbName, ok = ctx.GetQuery("database")
 		if !ok {
@@ -261,7 +249,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 			return
 		}
 	} else {
-		dbName = s.dbName
+		dbName = s.defaultDB
 	}
 
 	// Get collection name, return error if one isnt passed
