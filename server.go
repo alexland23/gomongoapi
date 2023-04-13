@@ -38,23 +38,23 @@ type server struct {
 
 // Create a new server
 // Must pass in Mongo Client Options
-func NewServer(mongoClientOpts *options.ClientOptions, option *Option) Server {
+func NewServer(opts *Options) Server {
 
-	router := option.Router
+	router := opts.Router
 
 	// Create api route group
 	apiRouter := router.Group("/api")
 
 	// Convert limits to string
-	findLimit := strconv.Itoa(option.FindLimit)
-	findMaxLimit := strconv.Itoa(option.FindMaxLimit)
+	findLimit := strconv.Itoa(opts.FindLimit)
+	findMaxLimit := strconv.Itoa(opts.FindMaxLimit)
 
 	return &server{
-		mongoClientOpts: mongoClientOpts,
+		mongoClientOpts: opts.MongoClientOpts,
 		router:          router,
 		apiRouter:       apiRouter,
-		address:         option.Address,
-		defaultDB:       option.DefaultDB,
+		address:         opts.Address,
+		defaultDB:       opts.DefaultDB,
 		findLimit:       findLimit,
 		findMaxLimit:    findMaxLimit,
 	}
