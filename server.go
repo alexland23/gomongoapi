@@ -23,6 +23,9 @@ type Server interface {
 	SetAPIMiddleware(middleware ...gin.HandlerFunc)
 	SetPort(port string)
 	SetLimit(limit string)
+
+	AddCustomGET(relativePath string, handlers ...gin.HandlerFunc)
+	AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc)
 }
 
 type server struct {
@@ -128,7 +131,6 @@ func (s *server) createRoutes() {
 	s.apiRouter.GET("/collections", s.getCollections)
 	s.apiRouter.POST("/collections/:name/find", s.collectionFind)
 	s.apiRouter.POST("/collections/:name/aggregate", s.collectionAggregate)
-
 }
 
 // Route to get all database names
@@ -304,4 +306,12 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, res)
+}
+
+func (s *server) AddCustomGET(relativePath string, handlers ...gin.HandlerFunc) {
+	s.apiRouter.GET(relativePath, handlers...)
+}
+
+func (s *server) AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc) {
+	s.apiRouter.POST(relativePath, handlers...)
 }
