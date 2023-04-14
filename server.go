@@ -141,7 +141,7 @@ func (s *server) Start() error {
 		return err
 	}
 
-	// Ensure router isnt nil
+	// Ensure router isn't nil
 	if s.router == nil {
 		return fmt.Errorf("gin router was is not set")
 	}
@@ -201,7 +201,7 @@ func (s *server) getDatabases(c *gin.Context) {
 func (s *server) getCollections(c *gin.Context) {
 
 	var dbName string
-	// If user didnt set a default db, check to see if one was passed
+	// If user didn't set a default db, check to see if one was passed
 	if s.defaultDB == "" {
 		var ok bool
 		dbName, ok = c.GetQuery("database")
@@ -245,7 +245,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 		dbName = s.defaultDB
 	}
 
-	// Get collection name, return error if one isnt passed
+	// Get collection name, return error if one isn't passed
 	collName := ctx.Param("name")
 	if collName == "" {
 		ctx.String(http.StatusBadRequest, "Collection name was not passed")
@@ -317,7 +317,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		dbName = s.defaultDB
 	}
 
-	// Get collection name, return error if one isnt passed
+	// Get collection name, return error if one isn't passed
 	collName := ctx.Param("name")
 	if collName == "" {
 		ctx.String(http.StatusBadRequest, "Collection name was not passed")
@@ -332,7 +332,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		return
 	}
 
-	// Get pipeline, if it doesnt exists an empty pipeline will be used
+	// Get pipeline, if it doesn't exists an empty pipeline will be used
 	pipeLine := reqBody["Aggregate"].([]interface{})
 
 	opts := options.Aggregate()

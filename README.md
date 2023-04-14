@@ -4,4 +4,4 @@
 
 gomongoapi allows for easy creation of a server that connects to a mongodb, creates routes to query it with the intent to easily create Grafana Dashboards.
 
-Recommended Grafana plugins [JSON API](https://grafana.com/grafana/plugins/marcusolsson-json-datasource/) [Infinity](https://grafana.com/grafana/plugins/yesoreyeram-infinity-datasource/)
+Recommended Grafana plugins [JSON API](https://grafana.com/grafana/plugins/marcusolsson-json-datasource/) and [Infinity](https://grafana.com/grafana/plugins/yesoreyeram-infinity-datasource/)
