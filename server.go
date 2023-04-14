@@ -4,10 +4,7 @@ The intent of these routes is to be used alongside either the JSON API or Infini
 MongoDB dashboards within Grafana.
 
 Package is using gin for the server and can be heavily customized as a custom gin engine can be set in the options.
-	s.apiRouter.GET("/databases", s.getDatabases)
-	s.apiRouter.GET("/collections", s.getCollections)
-	s.apiRouter.POST("/collections/:name/find", s.collectionFind)
-	s.apiRouter.POST("/collections/:name/aggregate", s.collectionAggregate)
+
 Available routes:
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
 	| Path                             | HTTP Verb | Body  | Result                                                                                               |
@@ -63,8 +60,15 @@ type Server interface {
 	// This allows custom additions like logging, auth, etc
 	SetAPIMiddleware(middleware ...gin.HandlerFunc)
 
+	// Add custom GET request, path will be under the /api route group
 	AddCustomGET(relativePath string, handlers ...gin.HandlerFunc)
+
+	// Add custom POST request, path will be under the /api route group
 	AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc)
+
+	// Returns server mongo client.
+	// This can be used along side AddCustomGET() and AddCustomPost() to make custom routes that use the db.
+	GetMongoClient() *mongo.Client
 }
 
 // Server struct that holds needed fields for server
@@ -357,4 +361,8 @@ func (s *server) AddCustomGET(relativePath string, handlers ...gin.HandlerFunc) 
 
 func (s *server) AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc) {
 	s.apiRouter.POST(relativePath, handlers...)
+}
+
+func (s *server) GetMongoClient() *mongo.Client {
+	return s.mongoClient
 }
