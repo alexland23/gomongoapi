@@ -5,7 +5,7 @@ MongoDB dashboards within Grafana.
 
 Package is using gin for the server and can be heavily customized as a custom gin engine can be set in the options.
 
-Available routes:
+Available default routes:
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
 	| Path                             | HTTP Verb | Body  | Result                                                                                               |
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
@@ -14,6 +14,8 @@ Available routes:
 	| /api/collections                 |    GET    | Empty | Returns a list collections to the default db or the one passed in url param.                         |
 	| /api/collections/:name/find      |    POST   | JSON  | Returns result of find on the collection name. DB is either default or one passed in url param.      |
 	| /api/collections/:name/aggregate |    POST   | JSON  | Returns result of aggregate on the collection name. DB is either default or one passed in url param. |
+	| /api/<Custom Route>              |    GET    | N/A   | Users can create custom GET route, they control everything.                                          |
+	| /api/<Custom Route>              |    POST   | N/A   | Users can create custom POST route, they control everything.                                         |
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
 
 To use the package, user must create the server options and at the minimum set the mongodb client options to connect to
@@ -25,10 +27,24 @@ Example
 	serverOpts := gomongoapi.ServerOptions()
 	serverOpts.SetMongoClientOpts(options.Client().ApplyURI("mongodb://localhost:27017"))
 	serverOpts.SetDefaultDB("app")
-	serverOpts.SetAddress(":4004")
+	serverOpts.SetAddress(":8080")
 
 	// Create server and set values
 	server := gomongoapi.NewServer(serverOpts)
+
+	// Add custom route
+	// Route will always return the count of the number of records in users collection
+	server.AddCustomGET("/appUsersCount", func(ctx *gin.Context) {
+		client := server.GetMongoClient()
+
+		count, err := client.Database("app").Collection("users").CountDocuments(ctx.Request.Context(), bson.M{})
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Error running count: "+err.Error())
+			return
+		}
+
+		ctx.JSON(http.StatusOK, bson.M{"Count": count})
+	})
 
 	// Start server
 	server.Start()
