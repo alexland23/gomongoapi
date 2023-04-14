@@ -128,12 +128,6 @@ func NewServer(opts *Options) Server {
 	}
 }
 
-// Add custom middleware in the /api router group.
-// This allows custom additions like logging, auth, etc
-func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
-	s.apiRouter.Use(middleware...)
-}
-
 // Start new server
 // This function will block unless an error occurs
 func (s *server) Start() error {
@@ -185,6 +179,12 @@ func (s *server) createRoutes() {
 	s.apiRouter.POST("/collections/:name/find", s.collectionFind)
 	s.apiRouter.POST("/collections/:name/count", s.collectionCount)
 	s.apiRouter.POST("/collections/:name/aggregate", s.collectionAggregate)
+}
+
+// Add custom middleware in the /api router group.
+// This allows custom additions like logging, auth, etc
+func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
+	s.apiRouter.Use(middleware...)
 }
 
 // Route to get all database names
