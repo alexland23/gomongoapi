@@ -1,4 +1,4 @@
-module github.com/alexland23/mongoapi
+module github.com/alexland23/gomongoapi
 
 go 1.18
 

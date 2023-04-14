@@ -1,9 +1,23 @@
 /*
-Package mongoapi is a pure go client that allows for easy creation of a server that creates routes to query a MongoDB.
+Package gomongoapi is a pure go client that allows for easy creation of a server that creates routes to query a MongoDB.
 The intent of these routes is to be used alongside either the JSON API or Infinity plugin with Grafana to allow for
 MongoDB dashboards within Grafana.
 
 Package is using gin for the server and can be heavily customized as a custom gin engine can be set in the options.
+	s.apiRouter.GET("/databases", s.getDatabases)
+	s.apiRouter.GET("/collections", s.getCollections)
+	s.apiRouter.POST("/collections/:name/find", s.collectionFind)
+	s.apiRouter.POST("/collections/:name/aggregate", s.collectionAggregate)
+Available routes:
+	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
+	| Path                             | HTTP Verb | Body  | Result                                                                                               |
+	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
+	| /                                |    GET    | Empty | Always 200, test connection.                                                                         |
+	| /api/databases                   |    GET    | Empty | Returns list of available databases, unless a default is set.                                        |
+	| /api/collections                 |    GET    | Empty | Returns a list collections to the default db or the one passed in url param.                         |
+	| /api/collections/:name/find      |    POST   | JSON  | Returns result of find on the collection name. DB is either default or one passed in url param.      |
+	| /api/collections/:name/aggregate |    POST   | JSON  | Returns result of aggregate on the collection name. DB is either default or one passed in url param. |
+	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
 
 To use the package, user must create the server options and at the minimum set the mongodb client options to connect to
 the db. Once the options are made, they can be passed to create a new server. Server Start() function will run the server
@@ -11,19 +25,19 @@ and block until it encounters an error.
 
 Example
 	// Set server options
-	serverOpts := mongoapi.ServerOptions()
+	serverOpts := gomongoapi.ServerOptions()
 	serverOpts.SetMongoClientOpts(options.Client().ApplyURI("mongodb://localhost:27017"))
 	serverOpts.SetDefaultDB("app")
 	serverOpts.SetAddress(":4004")
 
 	// Create server and set values
-	server := mongoapi.NewServer(serverOpts)
+	server := gomongoapi.NewServer(serverOpts)
 
 	// Start server
 	server.Start()
 
 */
-package mongoapi
+package gomongoapi
 
 import (
 	"context"
@@ -63,6 +77,7 @@ type server struct {
 	defaultDB       string
 	findLimit       string
 	findMaxLimit    string
+	maxLimit        int
 }
 
 // Create a new server
@@ -86,6 +101,7 @@ func NewServer(opts *Options) Server {
 		defaultDB:       opts.DefaultDB,
 		findLimit:       findLimit,
 		findMaxLimit:    findMaxLimit,
+		maxLimit:        opts.FindMaxLimit,
 	}
 }
 
@@ -236,6 +252,14 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	if err != nil {
 		ctx.String(http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
 		return
+	}
+
+	// If max limit is set, ensure passed limit is not greater than it.
+	if s.maxLimit != 0 {
+		if limit > s.maxLimit {
+			ctx.String(http.StatusBadRequest, "Passed limit is greater than max limit set by server")
+			return
+		}
 	}
 
 	// Get filter from request body
