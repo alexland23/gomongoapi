@@ -416,14 +416,18 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, res)
 }
 
+// Add custom GET request, path will be under the /api route group
 func (s *server) AddCustomGET(relativePath string, handlers ...gin.HandlerFunc) {
 	s.apiRouter.GET(relativePath, handlers...)
 }
 
+// Add custom POST request, path will be under the /api route group
 func (s *server) AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc) {
 	s.apiRouter.POST(relativePath, handlers...)
 }
 
+// Returns server mongo client.
+// This can be used along side AddCustomGET() and AddCustomPost() to make custom routes that use the db.
 func (s *server) GetMongoClient() *mongo.Client {
 	return s.mongoClient
 }
