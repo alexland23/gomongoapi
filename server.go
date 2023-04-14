@@ -183,6 +183,7 @@ func (s *server) createRoutes() {
 	s.apiRouter.GET("/databases", s.getDatabases)
 	s.apiRouter.GET("/collections", s.getCollections)
 	s.apiRouter.POST("/collections/:name/find", s.collectionFind)
+	s.apiRouter.POST("/collections/:name/count", s.collectionCount)
 	s.apiRouter.POST("/collections/:name/aggregate", s.collectionAggregate)
 }
 
@@ -242,8 +243,8 @@ func (s *server) getCollections(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// Runs a find on the collection
-// /collections/:name/find
+// Runs a find on the collection. /collections/:name/find
+// Valid URL parameter are 'database' and 'limit'
 // Request body should have the find filter
 //	ex) Request Body: {"UserName": "Jon"}
 func (s *server) collectionFind(ctx *gin.Context) {
@@ -312,6 +313,50 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, res)
+}
+
+// Runs a count on the collection. /collections/:name/count
+// Valid URL parameter is 'database'
+// Request body should have the count filter
+//	ex) Request Body: {"UserName": "Jon"}
+func (s *server) collectionCount(ctx *gin.Context) {
+
+	// If user didn't set a default db, check to see if one was passed
+	var dbName string
+	if s.defaultDB == "" {
+		var ok bool
+		dbName, ok = ctx.GetQuery("database")
+		if !ok {
+			ctx.String(http.StatusBadRequest, "Database name was not passed, one is needed")
+			return
+		}
+	} else {
+		dbName = s.defaultDB
+	}
+
+	// Get collection name, return error if one isn't passed
+	collName := ctx.Param("name")
+	if collName == "" {
+		ctx.String(http.StatusBadRequest, "Collection name was not passed")
+		return
+	}
+
+	// Get filter from request body
+	var filter bson.M
+	err := ctx.ShouldBindJSON(&filter)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		return
+	}
+
+	// Run find
+	count, err := s.mongoClient.Database(dbName).Collection(collName).CountDocuments(ctx.Request.Context(), filter)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "Error running find: %s", err.Error())
+		return
+	}
+
+	ctx.JSON(http.StatusOK, bson.M{"Count": count})
 }
 
 // Runs an aggregate on the collection
