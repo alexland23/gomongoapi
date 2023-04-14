@@ -1,5 +1,5 @@
 /*
-Package mongoapi is a pure go client that allows for easy creation of a server that creates routes to query a MongoDB.
+Package gomongoapi is a pure go client that allows for easy creation of a server that creates routes to query a MongoDB.
 The intent of these routes is to be used alongside either the JSON API or Infinity plugin with Grafana to allow for
 MongoDB dashboards within Grafana.
 
@@ -11,19 +11,19 @@ and block until it encounters an error.
 
 Example
 	// Set server options
-	serverOpts := mongoapi.ServerOptions()
+	serverOpts := gomongoapi.ServerOptions()
 	serverOpts.SetMongoClientOpts(options.Client().ApplyURI("mongodb://localhost:27017"))
 	serverOpts.SetDefaultDB("app")
 	serverOpts.SetAddress(":4004")
 
 	// Create server and set values
-	server := mongoapi.NewServer(serverOpts)
+	server := gomongoapi.NewServer(serverOpts)
 
 	// Start server
 	server.Start()
 
 */
-package mongoapi
+package gomongoapi
 
 import (
 	"context"

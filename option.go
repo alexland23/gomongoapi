@@ -1,4 +1,4 @@
-package mongoapi
+package gomongoapi
 
 import (
 	"github.com/gin-gonic/gin"
@@ -22,7 +22,7 @@ type Options struct {
 	// An upper limit of the number of records that find can return. Default is 0 which means no limit.
 	FindMaxLimit int
 
-	// Optional field if user wants to set a default database to use. If none is set then all databases will be queriable.
+	// Optional field if user wants to set a default database to use. If none is set then all databases will be queryable.
 	DefaultDB string
 }
 
