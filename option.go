@@ -1,8 +1,14 @@
 package gomongoapi
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+var (
+	ErrInvalidCustomRouteName = errors.New("invalid custom route name")
 )
 
 // Options contains options to configure the mongo api server
@@ -12,6 +18,9 @@ type Options struct {
 
 	// Server address that the gin router with use. Default is :8080
 	Address string
+
+	// Optional field to set custom route group name which will be used if user adds custom routes. Default is 'custom'.
+	CustomRouteName string
 
 	// Mongo Client options. Default is an empty set of options.
 	MongoClientOpts *options.ClientOptions
@@ -31,6 +40,7 @@ func ServerOptions() *Options {
 	return &Options{
 		Router:          gin.Default(),
 		Address:         ":8080",
+		CustomRouteName: "custom",
 		MongoClientOpts: options.Client(),
 		FindLimit:       1000,
 		FindMaxLimit:    0,
@@ -42,12 +52,23 @@ func (o *Options) SetRouter(router *gin.Engine) {
 	o.Router = router
 }
 
-// SetAddress sets the server address
+// SetAddress sets the server address.
 func (o *Options) SetAddress(address string) {
 	o.Address = address
 }
 
-// SetAddress sets the server address
+// SetCustomRouteName sets custom route name.
+func (o *Options) SetCustomRouteName(customRouteName string) error {
+	// Ensure custom route is not root or api
+	if customRouteName == `/` || customRouteName == `/api` {
+		return ErrInvalidCustomRouteName
+	}
+
+	o.CustomRouteName = customRouteName
+	return nil
+}
+
+// SetAddress sets the server address.
 func (o *Options) SetMongoClientOpts(mongoClientOpts *options.ClientOptions) {
 	o.MongoClientOpts = mongoClientOpts
 }
@@ -63,6 +84,7 @@ func (o *Options) SetFindLimit(findLimit int) {
 	o.FindLimit = findLimit
 }
 
+// SetFindMaxLimit sets the upper limit for find results.
 func (o *Options) SetFindMaxLimit(findMaxLimit int) {
 	o.FindMaxLimit = findMaxLimit
 }

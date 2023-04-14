@@ -14,8 +14,8 @@ Available default routes:
 	| /api/collections                 |    GET    | Empty | Returns a list collections to the default db or the one passed in url param.                         |
 	| /api/collections/:name/find      |    POST   | JSON  | Returns result of find on the collection name. DB is either default or one passed in url param.      |
 	| /api/collections/:name/aggregate |    POST   | JSON  | Returns result of aggregate on the collection name. DB is either default or one passed in url param. |
-	| /api/<Custom Route>              |    GET    | N/A   | Users can create custom GET route, they control everything.                                          |
-	| /api/<Custom Route>              |    POST   | N/A   | Users can create custom POST route, they control everything.                                         |
+	| /custom/<Custom Route>           |    GET    | N/A   | Users can create custom GET route, they control everything.                                          |
+	| /custom/<Custom Route>           |    POST   | N/A   | Users can create custom POST route, they control everything.                                         |
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
 
 To use the package, user must create the server options and at the minimum set the mongodb client options to connect to
@@ -80,10 +80,10 @@ type Server interface {
 	// This allows custom additions like logging, auth, etc
 	SetCustomMiddleware(middleware ...gin.HandlerFunc)
 
-	// Add custom GET request, path will be under the /api route group
+	// Add custom GET request, path will be under the /custom route group
 	AddCustomGET(relativePath string, handlers ...gin.HandlerFunc)
 
-	// Add custom POST request, path will be under the /api route group
+	// Add custom POST request, path will be under the /custom route group
 	AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc)
 
 	// Returns server mongo client.
@@ -116,7 +116,7 @@ func NewServer(opts *Options) Server {
 
 	// Create router groups
 	apiRouter := router.Group("/api")
-	customRouter := router.Group("/custom")
+	customRouter := router.Group(opts.CustomRouteName)
 
 	// Convert limits to string
 	findLimit := strconv.Itoa(opts.FindLimit)
@@ -429,12 +429,12 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, res)
 }
 
-// Add custom GET request, path will be under the /api route group
+// Add custom GET request, path will be under the /custom route group
 func (s *server) AddCustomGET(relativePath string, handlers ...gin.HandlerFunc) {
 	s.customRouter.GET(relativePath, handlers...)
 }
 
-// Add custom POST request, path will be under the /api route group
+// Add custom POST request, path will be under the /custom route group
 func (s *server) AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc) {
 	s.customRouter.POST(relativePath, handlers...)
 }
