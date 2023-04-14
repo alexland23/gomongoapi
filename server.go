@@ -1,4 +1,43 @@
-package mongoapi
+/*
+Package gomongoapi is a pure go client that allows for easy creation of a server that creates routes to query a MongoDB.
+The intent of these routes is to be used alongside either the JSON API or Infinity plugin with Grafana to allow for
+MongoDB dashboards within Grafana.
+
+Package is using gin for the server and can be heavily customized as a custom gin engine can be set in the options.
+	s.apiRouter.GET("/databases", s.getDatabases)
+	s.apiRouter.GET("/collections", s.getCollections)
+	s.apiRouter.POST("/collections/:name/find", s.collectionFind)
+	s.apiRouter.POST("/collections/:name/aggregate", s.collectionAggregate)
+Available routes:
+	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
+	| Path                             | HTTP Verb | Body  | Result                                                                                               |
+	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
+	| /                                |    GET    | Empty | Always 200, test connection.                                                                         |
+	| /api/databases                   |    GET    | Empty | Returns list of available databases, unless a default is set.                                        |
+	| /api/collections                 |    GET    | Empty | Returns a list collections to the default db or the one passed in url param.                         |
+	| /api/collections/:name/find      |    POST   | JSON  | Returns result of find on the collection name. DB is either default or one passed in url param.      |
+	| /api/collections/:name/aggregate |    POST   | JSON  | Returns result of aggregate on the collection name. DB is either default or one passed in url param. |
+	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
+
+To use the package, user must create the server options and at the minimum set the mongodb client options to connect to
+the db. Once the options are made, they can be passed to create a new server. Server Start() function will run the server
+and block until it encounters an error.
+
+Example
+	// Set server options
+	serverOpts := gomongoapi.ServerOptions()
+	serverOpts.SetMongoClientOpts(options.Client().ApplyURI("mongodb://localhost:27017"))
+	serverOpts.SetDefaultDB("app")
+	serverOpts.SetAddress(":4004")
+
+	// Create server and set values
+	server := gomongoapi.NewServer(serverOpts)
+
+	// Start server
+	server.Start()
+
+*/
+package gomongoapi
 
 import (
 	"context"
@@ -13,72 +52,66 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// Give user ability to only do readonly operations
+// Server interface for mongo api server
 type Server interface {
 
-	// Start server
+	// Start new server
+	// This function will block unless an error occurs
 	Start() error
 
-	SetDefaultDB(name string)
+	// Add custom middleware in the /api router group.
+	// This allows custom additions like logging, auth, etc
 	SetAPIMiddleware(middleware ...gin.HandlerFunc)
-	SetPort(port string)
-	SetLimit(limit string)
 
 	AddCustomGET(relativePath string, handlers ...gin.HandlerFunc)
 	AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc)
 }
 
+// Server struct that holds needed fields for server
 type server struct {
+	// Server fields
 	router    *gin.Engine
 	apiRouter *gin.RouterGroup
-	port      string
+	address   string
 
+	// Mongo fields
 	mongoClientOpts *options.ClientOptions
 	mongoClient     *mongo.Client
-	dbName          string
-	resLimit        string
+	defaultDB       string
+	findLimit       string
+	findMaxLimit    string
+	maxLimit        int
 }
 
 // Create a new server
 // Must pass in Mongo Client Options
-// Gin router is optional, if null will use default engine
-func NewServer(mongoClientOpts *options.ClientOptions, router *gin.Engine) Server {
+func NewServer(opts *Options) Server {
 
-	if router == nil {
-		router = gin.Default()
-	}
+	router := opts.Router
 
 	// Create api route group
 	apiRouter := router.Group("/api")
 
+	// Convert limits to string
+	findLimit := strconv.Itoa(opts.FindLimit)
+	findMaxLimit := strconv.Itoa(opts.FindMaxLimit)
+
 	return &server{
-		mongoClientOpts: mongoClientOpts,
+		mongoClientOpts: opts.MongoClientOpts,
 		router:          router,
 		apiRouter:       apiRouter,
-		resLimit:        "1000",
-		port:            "8080",
+		address:         opts.Address,
+		defaultDB:       opts.DefaultDB,
+		findLimit:       findLimit,
+		findMaxLimit:    findMaxLimit,
+		maxLimit:        opts.FindMaxLimit,
 	}
 }
 
-// Sets a default database to use
-func (s *server) SetDefaultDB(name string) {
-	s.dbName = name
-}
-
-// Sets any middleware funcs for /api routes
-// Example use would be any authorization
+// Add custom middleware in the /api router group.
+// This allows custom additions like logging, auth, etc
 func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
 	s.apiRouter.Use(middleware...)
-}
-
-// Sets a default port to use for api server
-func (s *server) SetPort(port string) {
-	s.port = port
-}
-
-// Sets a default port to use for api server
-func (s *server) SetLimit(limit string) {
-	s.resLimit = limit
 }
 
 // Start new server
@@ -113,7 +146,7 @@ func (s *server) Start() error {
 	s.createRoutes()
 
 	// Start router, this will block until error occurs
-	err = s.router.Run(s.port)
+	err = s.router.Run(s.address)
 
 	return err
 }
@@ -137,9 +170,9 @@ func (s *server) createRoutes() {
 func (s *server) getDatabases(c *gin.Context) {
 
 	// If user set a default database, only return that
-	if s.dbName != "" {
+	if s.defaultDB != "" {
 		res := bson.M{
-			"Databases": []string{s.dbName},
+			"Databases": []string{s.defaultDB},
 		}
 
 		c.JSON(http.StatusOK, res)
@@ -165,7 +198,7 @@ func (s *server) getCollections(c *gin.Context) {
 
 	var dbName string
 	// If user didnt set a default db, check to see if one was passed
-	if s.dbName == "" {
+	if s.defaultDB == "" {
 		var ok bool
 		dbName, ok = c.GetQuery("database")
 		if !ok {
@@ -173,7 +206,7 @@ func (s *server) getCollections(c *gin.Context) {
 			return
 		}
 	} else {
-		dbName = s.dbName
+		dbName = s.defaultDB
 	}
 
 	collNames, err := s.mongoClient.Database(dbName).ListCollectionNames(c.Request.Context(), bson.M{})
@@ -191,11 +224,13 @@ func (s *server) getCollections(c *gin.Context) {
 
 // Runs a find on the collection
 // /collections/:name/find
+// Request body should have the find filter
+//	ex) Request Body: {"UserName": "Jon"}
 func (s *server) collectionFind(ctx *gin.Context) {
 
 	// If user didn't set a default db, check to see if one was passed
 	var dbName string
-	if s.dbName == "" {
+	if s.defaultDB == "" {
 		var ok bool
 		dbName, ok = ctx.GetQuery("database")
 		if !ok {
@@ -203,7 +238,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 			return
 		}
 	} else {
-		dbName = s.dbName
+		dbName = s.defaultDB
 	}
 
 	// Get collection name, return error if one isnt passed
@@ -214,11 +249,19 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	}
 
 	// Get limit, if none was passed default to default value
-	limitString := ctx.DefaultQuery("limit", s.resLimit)
+	limitString := ctx.DefaultQuery("limit", s.findLimit)
 	limit, err := strconv.Atoi(limitString)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
 		return
+	}
+
+	// If max limit is set, ensure passed limit is not greater than it.
+	if s.maxLimit != 0 {
+		if limit > s.maxLimit {
+			ctx.String(http.StatusBadRequest, "Passed limit is greater than max limit set by server")
+			return
+		}
 	}
 
 	// Get filter from request body
@@ -251,11 +294,15 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, res)
 }
 
+// Runs an aggregate on the collection
+// /collections/:name/aggregate
+// Request body should contain the aggregate command
+//	ex) Request Body: {"Aggregate": [{"$match": { "UserName": "Jon" }}]
 func (s *server) collectionAggregate(ctx *gin.Context) {
 
 	// If user didn't set a default db, check to see if one was passed
 	var dbName string
-	if s.dbName == "" {
+	if s.defaultDB == "" {
 		var ok bool
 		dbName, ok = ctx.GetQuery("database")
 		if !ok {
@@ -263,7 +310,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 			return
 		}
 	} else {
-		dbName = s.dbName
+		dbName = s.defaultDB
 	}
 
 	// Get collection name, return error if one isnt passed
@@ -281,12 +328,8 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		return
 	}
 
-	// Get pipeline
-	pipeLine, ok := reqBody["Aggregate"].([]interface{})
-	if !ok {
-		ctx.String(http.StatusBadRequest, "Request Body is missing aggregate pipeline")
-		return
-	}
+	// Get pipeline, if it doesnt exists an empty pipeline will be used
+	pipeLine := reqBody["Aggregate"].([]interface{})
 
 	opts := options.Aggregate()
 	opts.SetAllowDiskUse(true)
