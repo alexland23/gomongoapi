@@ -9,14 +9,19 @@ import (
 type Options struct {
 	// Gin engine that server will use, gin.Default() is the default value.
 	Router *gin.Engine
+
 	// Server address that the gin router with use. Default is :8080
 	Address string
+
 	// Mongo Client options. Default is an empty set of options.
 	MongoClientOpts *options.ClientOptions
+
 	// Default value of number of records find will return if one is not passed in url.
 	FindLimit int
+
 	// An upper limit of the number of records that find can return. Default is 0 which means no limit.
 	FindMaxLimit int
+
 	// Optional field if user wants to set a default database to use. If none is set then all databases will be queriable.
 	DefaultDB string
 }

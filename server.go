@@ -1,3 +1,28 @@
+/*
+Package mongoapi is a pure go client that allows for easy creation of a server that creates routes to query a MongoDB.
+The intent of these routes is to be used alongside either the JSON API or Infinity plugin with Grafana to allow for
+MongoDB dashboards within Grafana.
+
+Package is using gin for the server and can be heavily customized as a custom gin engine can be set in the options.
+
+To use the package, user must create the server options and at the minimum set the mongodb client options to connect to
+the db. Once the options are made, they can be passed to create a new server. Server Start() function will run the server
+and block until it encounters an error.
+
+Example
+	// Set server options
+	serverOpts := mongoapi.ServerOptions()
+	serverOpts.SetMongoClientOpts(options.Client().ApplyURI("mongodb://localhost:27017"))
+	serverOpts.SetDefaultDB("app")
+	serverOpts.SetAddress(":4004")
+
+	// Create server and set values
+	server := mongoapi.NewServer(serverOpts)
+
+	// Start server
+	server.Start()
+
+*/
 package mongoapi
 
 import (
@@ -13,15 +38,19 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// Give user ability to only do readonly operations
+// Server interface for mongo api server
 type Server interface {
 
-	// Start server
+	// Start new server
+	// This function will block unless an error occurs
 	Start() error
 
+	// Add custom middleware in the /api router group.
+	// This allows custom additions like logging, auth, etc
 	SetAPIMiddleware(middleware ...gin.HandlerFunc)
 }
 
+// Server struct that holds needed fields for server
 type server struct {
 	// Server fields
 	router    *gin.Engine
@@ -60,8 +89,8 @@ func NewServer(opts *Options) Server {
 	}
 }
 
-// Sets any middleware funcs for /api routes
-// Example use would be any authorization
+// Add custom middleware in the /api router group.
+// This allows custom additions like logging, auth, etc
 func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
 	s.apiRouter.Use(middleware...)
 }
@@ -177,6 +206,8 @@ func (s *server) getCollections(c *gin.Context) {
 
 // Runs a find on the collection
 // /collections/:name/find
+// Request body should have the find filter
+//	ex) Request Body: {"UserName": "Jon"}
 func (s *server) collectionFind(ctx *gin.Context) {
 
 	// If user didn't set a default db, check to see if one was passed
@@ -237,6 +268,10 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, res)
 }
 
+// Runs an aggregate on the collection
+// /collections/:name/aggregate
+// Request body should contain the aggregate command
+//	ex) Request Body: {"Aggregate": [{"$match": { "UserName": "Jon" }}]
 func (s *server) collectionAggregate(ctx *gin.Context) {
 
 	// If user didn't set a default db, check to see if one was passed
@@ -267,12 +302,8 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		return
 	}
 
-	// Get pipeline
-	pipeLine, ok := reqBody["Aggregate"].([]interface{})
-	if !ok {
-		ctx.String(http.StatusBadRequest, "Request Body is missing aggregate pipeline")
-		return
-	}
+	// Get pipeline, if it doesnt exists an empty pipeline will be used
+	pipeLine := reqBody["Aggregate"].([]interface{})
 
 	opts := options.Aggregate()
 	opts.SetAllowDiskUse(true)
