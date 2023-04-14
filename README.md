@@ -1,5 +1,4 @@
 # mongoapi
-============
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/alexland23/mongoAPI.svg)](https://pkg.go.dev/github.com/alexland23/mongoAPI)
 
