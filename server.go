@@ -76,6 +76,10 @@ type Server interface {
 	// This allows custom additions like logging, auth, etc
 	SetAPIMiddleware(middleware ...gin.HandlerFunc)
 
+	// Add custom middleware in the /custom router group.
+	// This allows custom additions like logging, auth, etc
+	SetCustomMiddleware(middleware ...gin.HandlerFunc)
+
 	// Add custom GET request, path will be under the /api route group
 	AddCustomGET(relativePath string, handlers ...gin.HandlerFunc)
 
@@ -90,9 +94,10 @@ type Server interface {
 // Server struct that holds needed fields for server
 type server struct {
 	// Server fields
-	router    *gin.Engine
-	apiRouter *gin.RouterGroup
-	address   string
+	router       *gin.Engine
+	apiRouter    *gin.RouterGroup
+	customRouter *gin.RouterGroup
+	address      string
 
 	// Mongo fields
 	mongoClientOpts *options.ClientOptions
@@ -109,8 +114,9 @@ func NewServer(opts *Options) Server {
 
 	router := opts.Router
 
-	// Create api route group
+	// Create router groups
 	apiRouter := router.Group("/api")
+	customRouter := router.Group("/custom")
 
 	// Convert limits to string
 	findLimit := strconv.Itoa(opts.FindLimit)
@@ -120,6 +126,7 @@ func NewServer(opts *Options) Server {
 		mongoClientOpts: opts.MongoClientOpts,
 		router:          router,
 		apiRouter:       apiRouter,
+		customRouter:    customRouter,
 		address:         opts.Address,
 		defaultDB:       opts.DefaultDB,
 		findLimit:       findLimit,
@@ -185,6 +192,12 @@ func (s *server) createRoutes() {
 // This allows custom additions like logging, auth, etc
 func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
 	s.apiRouter.Use(middleware...)
+}
+
+// Add custom middleware in the /custom router group.
+// This allows custom additions like logging, auth, etc
+func (s *server) SetCustomMiddleware(middleware ...gin.HandlerFunc) {
+	s.customRouter.Use(middleware...)
 }
 
 // Route to get all database names
@@ -418,12 +431,12 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 
 // Add custom GET request, path will be under the /api route group
 func (s *server) AddCustomGET(relativePath string, handlers ...gin.HandlerFunc) {
-	s.apiRouter.GET(relativePath, handlers...)
+	s.customRouter.GET(relativePath, handlers...)
 }
 
 // Add custom POST request, path will be under the /api route group
 func (s *server) AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc) {
-	s.apiRouter.POST(relativePath, handlers...)
+	s.customRouter.POST(relativePath, handlers...)
 }
 
 // Returns server mongo client.
