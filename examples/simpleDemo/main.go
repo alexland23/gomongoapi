@@ -66,7 +66,8 @@ func main() {
 
 // seedSampleData inserts sample "logs" and "users" documents so the demo has
 // data to query right away. It connects on its own (independent of the
-// gomongoapi server) and is a no-op if the "logs" collection is non-empty.
+// gomongoapi server) and seeds each collection independently, skipping any
+// collection that is already non-empty.
 func seedSampleData(mongoURI string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -83,38 +84,46 @@ func seedSampleData(mongoURI string) error {
 
 	logs := client.Database(dbName).Collection("logs")
 
-	existing, err := logs.CountDocuments(ctx, bson.M{})
+	logsExisting, err := logs.CountDocuments(ctx, bson.M{})
 	if err != nil {
 		return err
 	}
-	if existing > 0 {
-		return nil
-	}
+	if logsExisting == 0 {
+		countries := []string{"US", "CA", "MX", "BR", "GB", "DE", "FR", "JP"}
+		words := []string{"alpha", "bravo", "charlie", "delta", "echo"}
 
-	countries := []string{"US", "CA", "MX", "BR", "GB", "DE", "FR", "JP"}
-	words := []string{"alpha", "bravo", "charlie", "delta", "echo"}
-
-	now := time.Now()
-	logDocs := make([]any, 0, 200)
-	for i := range 200 {
-		logDocs = append(logDocs, Logs{
-			TimeStamp: now.Add(-time.Duration(i) * time.Hour),
-			Amount:    rand.Float64() * 1000,
-			Country:   countries[rand.Intn(len(countries))],
-			Word:      words[rand.Intn(len(words))],
-			Count:     rand.Intn(100),
-		})
-	}
-	if _, err = logs.InsertMany(ctx, logDocs); err != nil {
-		return err
+		now := time.Now()
+		logDocs := make([]any, 0, 200)
+		for i := range 200 {
+			logDocs = append(logDocs, Logs{
+				TimeStamp: now.Add(-time.Duration(i) * time.Hour),
+				Amount:    rand.Float64() * 1000,
+				Country:   countries[rand.Intn(len(countries))],
+				Word:      words[rand.Intn(len(words))],
+				Count:     rand.Intn(100),
+			})
+		}
+		if _, err = logs.InsertMany(ctx, logDocs); err != nil {
+			return err
+		}
 	}
 
 	users := client.Database(dbName).Collection("users")
-	userDocs := []any{
-		bson.M{"name": "Ada Lovelace", "country": "GB"},
-		bson.M{"name": "Grace Hopper", "country": "US"},
-		bson.M{"name": "Katherine Johnson", "country": "US"},
+
+	usersExisting, err := users.CountDocuments(ctx, bson.M{})
+	if err != nil {
+		return err
 	}
-	_, err = users.InsertMany(ctx, userDocs)
-	return err
+	if usersExisting == 0 {
+		userDocs := []any{
+			bson.M{"name": "Ada Lovelace", "country": "GB"},
+			bson.M{"name": "Grace Hopper", "country": "US"},
+			bson.M{"name": "Katherine Johnson", "country": "US"},
+		}
+		if _, err = users.InsertMany(ctx, userDocs); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
