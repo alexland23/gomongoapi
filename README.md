@@ -76,8 +76,10 @@ Then open Grafana at http://localhost:3000 (default login `admin` / `admin`).
 | `/custom/<custom route>`              | GET       | N/A   | User-defined GET route — user controls everything.                                                     |
 | `/custom/<custom route>`              | POST      | N/A   | User-defined POST route — user controls everything.                                                    |
 
-`find` and `aggregate` both accept an optional `limit` url param, and `find` respects a
-server-wide max limit if one is configured (see [`Options`](#options) below).
+`find` and `aggregate` both accept an optional `limit` url param, and both respect a
+server-wide default (`FindLimit`) and max (`FindMaxLimit`) if configured (see
+[`Options`](#options) below). For `aggregate`, the limit is applied as a `$limit` stage
+appended to the end of the caller's pipeline.
 
 ## Options
 
@@ -91,8 +93,8 @@ be customized with the setter methods below before being passed to `gomongoapi.N
 | `CustomRouteName` / `SetCustomRouteName(string)`| `custom`             | Route group name used for custom routes. Cannot be `/` or `/api`.                               |
 | `MongoClientOpts` / `SetMongoClientOpts(*options.ClientOptions)` | empty options | MongoDB client options, e.g. connection URI. Required for a real connection.        |
 | `DefaultDB` / `SetDefaultDB(string)`            | none (unset)         | If set, all routes operate against this database and the `database` url param is not needed.    |
-| `FindLimit` / `SetFindLimit(int)`               | `1000`               | Default number of records returned by `find` when no `limit` url param is passed.               |
-| `FindMaxLimit` / `SetFindMaxLimit(int)`         | `0` (no limit)       | Upper bound on the `limit` url param for `find`. Requests above this are rejected.               |
+| `FindLimit` / `SetFindLimit(int)`               | `1000`               | Default number of records returned by `find` and `aggregate` when no `limit` url param is passed. |
+| `FindMaxLimit` / `SetFindMaxLimit(int)`         | `0` (no limit)       | Upper bound on the `limit` url param for `find` and `aggregate`. Requests above this are rejected. |
 
 ## Custom routes and middleware
 

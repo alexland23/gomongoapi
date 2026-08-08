@@ -729,6 +729,103 @@ func TestCollectionAggregate_LowercaseAggregateKeyIsApplied(t *testing.T) {
 	assert.EqualValues(t, 4, results[0]["total"])
 }
 
+func TestCollectionAggregate_BadLimit(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate?limit=notanumber", `{"Aggregate":[]}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCollectionAggregate_LimitExceedsMax(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 10)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate?limit=50", `{"Aggregate":[]}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCollectionAggregate_RespectsDefaultLimit(t *testing.T) {
+	// An empty pipeline would otherwise return the entire collection; the
+	// server-wide default limit must still cap it.
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	docs := make([]any, 0, 5)
+	for i := range 5 {
+		docs = append(docs, bson.M{"n": i})
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 2, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"Aggregate":[]}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	assert.Len(t, results, 2)
+}
+
+func TestCollectionAggregate_RespectsLimitParam(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	docs := make([]any, 0, 5)
+	for i := range 5 {
+		docs = append(docs, bson.M{"n": i})
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate?limit=3", `{"Aggregate":[]}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	assert.Len(t, results, 3)
+}
+
+func TestCollectionAggregate_LimitAppliedAfterGroupStage(t *testing.T) {
+	// Verifies the trailing $limit stage still caps results even when the
+	// caller's pipeline ends in a $group, which produces fewer documents
+	// than it consumed.
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a", "qty": 1},
+		bson.M{"name": "b", "qty": 2},
+		bson.M{"name": "c", "qty": 3},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 2, 0)
+	s.createRoutes()
+
+	body := `{"Aggregate":[{"$group":{"_id":"$name","total":{"$sum":"$qty"}}}]}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", body)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	assert.Len(t, results, 2)
+}
+
 func TestCollectionAggregate_NonArrayLowercaseAggregateField(t *testing.T) {
 	s := newTestServer(nil, "app", 100, 0)
 	s.createRoutes()
