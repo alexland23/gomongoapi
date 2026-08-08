@@ -150,7 +150,6 @@ func newTestServer(client *mongo.Client, defaultDB string, findLimit, findMaxLim
 		mongoClient:  client,
 		defaultDB:    defaultDB,
 		findLimit:    strconv.Itoa(findLimit),
-		findMaxLimit: strconv.Itoa(findMaxLimit),
 		maxLimit:     findMaxLimit,
 	}
 }
@@ -186,7 +185,6 @@ func TestNewServer(t *testing.T) {
 	assert.Equal(t, ":9999", s.address)
 	assert.Equal(t, "app", s.defaultDB)
 	assert.Equal(t, "50", s.findLimit)
-	assert.Equal(t, "500", s.findMaxLimit)
 	assert.Equal(t, 500, s.maxLimit)
 	require.NotNil(t, s.apiRouter)
 	require.NotNil(t, s.customRouter)
