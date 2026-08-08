@@ -58,6 +58,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os/signal"
@@ -304,6 +305,18 @@ func writeError(ctx *gin.Context, status int, message string) {
 	ctx.JSON(status, bson.M{"error": message})
 }
 
+// bindJSONBody decodes the request body as JSON into v, always via the JSON
+// binder regardless of the request's Content-Type. An empty body (io.EOF) is
+// treated as success, leaving v at its zero value, so callers can omit the
+// body entirely rather than being forced to send "{}".
+func bindJSONBody(ctx *gin.Context, v any) error {
+	err := ctx.ShouldBindJSON(v)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
+
 // resolveDB determines the target database for a /api/collections/... route:
 // Options.DefaultDB if set, otherwise the "database" query param. If neither
 // is available it writes the 400 response itself and returns ok=false, so
@@ -386,12 +399,14 @@ func (s *server) collectionFind(ctx *gin.Context) {
 		limit = s.maxLimit
 	}
 
-	// Get filter from request body
+	// Get filter from request body. An empty body means "no filter".
 	var filter bson.M
-	err = ctx.ShouldBindJSON(&filter)
-	if err != nil {
+	if err := bindJSONBody(ctx, &filter); err != nil {
 		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
+	}
+	if filter == nil {
+		filter = bson.M{}
 	}
 
 	opts := options.Find()
@@ -435,12 +450,14 @@ func (s *server) collectionCount(ctx *gin.Context) {
 		return
 	}
 
-	// Get filter from request body
+	// Get filter from request body. An empty body means "no filter".
 	var filter bson.M
-	err := ctx.ShouldBindJSON(&filter)
-	if err != nil {
+	if err := bindJSONBody(ctx, &filter); err != nil {
 		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
+	}
+	if filter == nil {
+		filter = bson.M{}
 	}
 
 	// Run find
@@ -497,10 +514,12 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		limit = s.maxLimit
 	}
 
-	// Get request body
+	// Get request body. An empty body means "no pipeline". Bound via the JSON
+	// binder specifically (not ShouldBind, which picks a binder from
+	// Content-Type and would fall through to form binding, misinterpreting a
+	// valid JSON body without a Content-Type: application/json header).
 	var reqBody map[string]any
-	err = ctx.ShouldBind(&reqBody)
-	if err != nil {
+	if err := bindJSONBody(ctx, &reqBody); err != nil {
 		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
 	}

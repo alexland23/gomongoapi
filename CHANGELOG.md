@@ -5,6 +5,13 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `find` and `count` no longer reject a request with an empty body; an empty body is
+  now treated as an empty filter instead of a `400`. `aggregate` now binds the request
+  body as JSON regardless of the `Content-Type` header, instead of only when
+  `Content-Type: application/json` is set. (#32)
+
 ### Changed
 
 - **Breaking:** All `/api/...` route failure responses now return a JSON envelope,

@@ -156,8 +156,7 @@ func newTestServer(client *mongo.Client, defaultDB string, findLimit, findMaxLim
 	}
 }
 
-// doJSONRequest issues a request with a JSON content type, which the
-// aggregate route's ctx.ShouldBind depends on to select JSON binding.
+// doJSONRequest issues a request with a JSON content type.
 func doJSONRequest(router http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
@@ -655,6 +654,30 @@ func TestCollectionFind_BadRequestBody(t *testing.T) {
 	assert.Contains(t, errorBody(t, w), "Error reading body request")
 }
 
+func TestCollectionFind_EmptyBodyUsesEmptyFilter(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a"},
+		bson.M{"name": "b"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", "")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	assert.Len(t, results, 2)
+}
+
 func TestCollectionFind_Success(t *testing.T) {
 	client := requireMongo(t)
 	dbName := testDBName(t)
@@ -749,6 +772,31 @@ func TestCollectionCount_BadRequestBody(t *testing.T) {
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/count", `not json`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, errorBody(t, w), "Error reading body request")
+}
+
+func TestCollectionCount_EmptyBodyUsesEmptyFilter(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a"},
+		bson.M{"name": "b"},
+		bson.M{"name": "c"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/count", "")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct{ Count int64 }
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.EqualValues(t, 3, body.Count)
 }
 
 func TestCollectionCount_Success(t *testing.T) {
@@ -855,6 +903,60 @@ func TestCollectionAggregate_MissingAggregateFieldUsesEmptyPipeline(t *testing.T
 	var results []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
 	assert.Len(t, results, 1)
+}
+
+func TestCollectionAggregate_EmptyBodyUsesEmptyPipeline(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertOne(ctx, bson.M{"name": "a"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", "")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	assert.Len(t, results, 1)
+}
+
+func TestCollectionAggregate_AcceptsJSONWithoutContentTypeHeader(t *testing.T) {
+	// Regression test: collectionAggregate previously used ctx.ShouldBind,
+	// which selects a binder from Content-Type and fell through to form
+	// binding when the header was absent, failing on a well-formed JSON body.
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a", "qty": 1},
+		bson.M{"name": "b", "qty": 2},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/collections/widgets/aggregate",
+		bytes.NewBufferString(`{"Aggregate":[{"$match":{"name":"a"}}]}`))
+	// Deliberately no Content-Type header set.
+	s.router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 1)
+	assert.Equal(t, "a", results[0]["name"])
 }
 
 func TestCollectionAggregate_LowercaseAggregateKeyIsApplied(t *testing.T) {
