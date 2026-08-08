@@ -3,7 +3,7 @@ module github.com/alexland23/gomongoapi/examples/simpleDemo
 go 1.25.0
 
 require (
-	github.com/alexland23/gomongoapi v1.0.2
+	github.com/alexland23/gomongoapi v1.1.0
 	github.com/gin-gonic/gin v1.12.0
 	go.mongodb.org/mongo-driver/v2 v2.8.0
 )
