@@ -1,0 +1,53 @@
+volumes:
+  mongodb-data:
+  mongodb-config-data:
+  grafana-data:
+
+
+services:
+  # Grafana
+  grafana:
+    image: grafana/grafana-oss:9.3.4
+    container_name: grafana
+    ports:
+      - 3000:3000
+    environment:
+      - GF_INSTALL_PLUGINS=marcusolsson-json-datasource,yesoreyeram-infinity-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./provisioning:/etc/grafana/provisioning
+
+  # Mongodb
+  mongodb:
+    image: mongo:5.0
+    container_name: mongodb
+    ports:
+      - 27017:27017
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config-data:/data/configdb
+
+  # Mongo Express
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    ports:
+      - 8081:8081
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017/
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+  # Go application: starts the gomongoapi server and seeds sample data
+  go-server:
+    build:
+      context: ../..
+      dockerfile: examples/simpleDemo/Dockerfile
+    container_name: go-server
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+    ports:
+      - 8080:8080
+    depends_on:
+      - mongodb
+    restart: unless-stopped
