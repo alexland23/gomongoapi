@@ -68,7 +68,7 @@ func (o *Options) SetCustomRouteName(customRouteName string) error {
 	return nil
 }
 
-// SetAddress sets the server address.
+// SetMongoClientOpts sets the mongo client options used to connect to MongoDB.
 func (o *Options) SetMongoClientOpts(mongoClientOpts *options.ClientOptions) {
 	o.MongoClientOpts = mongoClientOpts
 }

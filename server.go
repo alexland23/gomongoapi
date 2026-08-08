@@ -105,7 +105,6 @@ type server struct {
 	mongoClient     *mongo.Client
 	defaultDB       string
 	findLimit       string
-	findMaxLimit    string
 	maxLimit        int
 }
 
@@ -123,9 +122,8 @@ func NewServer(opts *Options) Server {
 		customRouter = router.Group(opts.CustomRouteName)
 	}
 
-	// Convert limits to string
+	// Convert limit to string
 	findLimit := strconv.Itoa(opts.FindLimit)
-	findMaxLimit := strconv.Itoa(opts.FindMaxLimit)
 
 	return &server{
 		mongoClientOpts: opts.MongoClientOpts,
@@ -135,7 +133,6 @@ func NewServer(opts *Options) Server {
 		address:         opts.Address,
 		defaultDB:       opts.DefaultDB,
 		findLimit:       findLimit,
-		findMaxLimit:    findMaxLimit,
 		maxLimit:        opts.FindMaxLimit,
 	}
 }
@@ -331,7 +328,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	}
 
 	// Decode results
-	var res []map[string]interface{}
+	var res []map[string]any
 	err = cursor.All(ctx.Request.Context(), &res)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Error decoding results: %s", err.Error())
@@ -437,7 +434,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	}
 
 	// Get request body
-	var reqBody map[string]interface{}
+	var reqBody map[string]any
 	err = ctx.ShouldBind(&reqBody)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
@@ -477,7 +474,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	}
 
 	// Decode results
-	var res []map[string]interface{}
+	var res []map[string]any
 	err = cursor.All(ctx.Request.Context(), &res)
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, "Error decoding results: %s", err.Error())
