@@ -194,6 +194,23 @@ func TestNewServer(t *testing.T) {
 	assert.Equal(t, "/myroutes", s.customRouter.BasePath())
 }
 
+func TestNewServer_NilRouter(t *testing.T) {
+	opts := ServerOptions()
+	opts.Router = nil
+
+	require.NotPanics(t, func() {
+		srv := NewServer(opts)
+		require.NotNil(t, srv)
+
+		s, ok := srv.(*server)
+		require.True(t, ok)
+
+		assert.Nil(t, s.router)
+		assert.Nil(t, s.apiRouter)
+		assert.Nil(t, s.customRouter)
+	})
+}
+
 // ---- createRoutes / root route ----
 
 func TestServer_RootRoute(t *testing.T) {
@@ -298,8 +315,12 @@ func TestStart_PingFailure(t *testing.T) {
 func TestStart_NilRouter(t *testing.T) {
 	requireMongo(t)
 
-	s := &server{mongoClientOpts: options.Client().ApplyURI(sharedMongoURI)}
-	err := s.Start()
+	opts := ServerOptions()
+	opts.SetMongoClientOpts(options.Client().ApplyURI(sharedMongoURI))
+	opts.Router = nil
+
+	srv := NewServer(opts)
+	err := srv.Start()
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gin router")

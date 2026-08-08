@@ -115,9 +115,13 @@ func NewServer(opts *Options) Server {
 
 	router := opts.Router
 
-	// Create router groups
-	apiRouter := router.Group("/api")
-	customRouter := router.Group(opts.CustomRouteName)
+	// Create router groups, skipping if the router isn't set. Start() will
+	// catch a nil router and return an error rather than panicking here.
+	var apiRouter, customRouter *gin.RouterGroup
+	if router != nil {
+		apiRouter = router.Group("/api")
+		customRouter = router.Group(opts.CustomRouteName)
+	}
 
 	// Convert limits to string
 	findLimit := strconv.Itoa(opts.FindLimit)
@@ -161,7 +165,7 @@ func (s *server) Start() error {
 
 	// Ensure router isn't nil
 	if s.router == nil {
-		return fmt.Errorf("gin router was is not set")
+		return fmt.Errorf("gin router is not set")
 	}
 
 	// Set routes
