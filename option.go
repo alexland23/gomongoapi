@@ -49,6 +49,11 @@ type Options struct {
 	// Upper bound on the Mongo ping issued by the /api/health readiness route, so a hung Mongo
 	// host can't make the health check itself hang. Default is 5 seconds.
 	HealthCheckTimeout time.Duration
+
+	// Upper bound, in bytes, on request bodies accepted by the /api group (find/count/aggregate
+	// filters and pipelines). Requests whose body exceeds this are rejected with 413. 0 disables
+	// the limit. Default is 1 MiB.
+	MaxBodyBytes int64
 }
 
 // ServerOptions returns server options with default values.
@@ -64,6 +69,7 @@ func ServerOptions() *Options {
 		ShutdownTimeout:    defaultShutdownTimeout,
 		ReadHeaderTimeout:  defaultReadHeaderTimeout,
 		HealthCheckTimeout: defaultHealthCheckTimeout,
+		MaxBodyBytes:       defaultMaxBodyBytes,
 	}
 }
 
@@ -130,4 +136,10 @@ func (o *Options) SetReadHeaderTimeout(readHeaderTimeout time.Duration) {
 // readiness route.
 func (o *Options) SetHealthCheckTimeout(healthCheckTimeout time.Duration) {
 	o.HealthCheckTimeout = healthCheckTimeout
+}
+
+// SetMaxBodyBytes sets the upper bound, in bytes, on request bodies accepted by the /api
+// group. 0 disables the limit.
+func (o *Options) SetMaxBodyBytes(maxBodyBytes int64) {
+	o.MaxBodyBytes = maxBodyBytes
 }

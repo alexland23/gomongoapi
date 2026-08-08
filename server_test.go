@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -156,6 +157,20 @@ func newTestServer(client *mongo.Client, defaultDB string, findLimit, findMaxLim
 		maxLimit:           findMaxLimit,
 		healthCheckTimeout: defaultHealthCheckTimeout,
 	}
+}
+
+// captureLog redirects the standard logger's output to a buffer for the
+// duration of the test, restoring it on cleanup, so tests can assert on
+// warnings logged via the log package.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(orig) })
+
+	return &buf
 }
 
 // doJSONRequest issues a request with a JSON content type.
@@ -315,6 +330,38 @@ func TestSetCustomMiddleware(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "hit", w.Header().Get("X-Test-Middleware"))
+}
+
+func TestSetAPIMiddleware_AfterRoutesRegisteredLogsWarning(t *testing.T) {
+	buf := captureLog(t)
+
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	s.SetAPIMiddleware(func(_ *gin.Context) {})
+
+	assert.Contains(t, buf.String(), "SetAPIMiddleware called after Start()")
+}
+
+func TestSetCustomMiddleware_AfterRoutesRegisteredLogsWarning(t *testing.T) {
+	buf := captureLog(t)
+
+	s := newTestServer(nil, "", 100, 0)
+	s.createRoutes()
+
+	s.SetCustomMiddleware(func(_ *gin.Context) {})
+
+	assert.Contains(t, buf.String(), "SetCustomMiddleware called after Start()")
+}
+
+func TestSetAPIMiddleware_BeforeRoutesRegisteredNoWarning(t *testing.T) {
+	buf := captureLog(t)
+
+	s := newTestServer(nil, "app", 100, 0)
+	s.SetAPIMiddleware(func(_ *gin.Context) {})
+	s.createRoutes()
+
+	assert.Empty(t, buf.String())
 }
 
 func TestAddCustomPOST(t *testing.T) {
@@ -1011,6 +1058,26 @@ func TestCollectionCount_MissingCollectionName(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, "Collection name was not passed", errorBody(t, w))
+}
+
+// TestCollectionCount_BodyTooLarge exercises the MaxBodyBytes limit end to
+// end via NewServer, since newTestServer builds a *server directly and
+// bypasses the middleware NewServer registers on apiRouter.
+func TestCollectionCount_BodyTooLarge(t *testing.T) {
+	opts := ServerOptions()
+	opts.SetRouter(gin.New())
+	opts.SetDefaultDB("app")
+	opts.SetMaxBodyBytes(10)
+
+	s, ok := NewServer(opts).(*server)
+	require.True(t, ok)
+	s.createRoutes()
+
+	oversizedBody := fmt.Sprintf(`{"filter": "%s"}`, strings.Repeat("a", 100))
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/count", oversizedBody)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	assert.Contains(t, errorBody(t, w), "too large")
 }
 
 func TestCollectionCount_BadRequestBody(t *testing.T) {

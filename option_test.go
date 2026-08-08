@@ -25,6 +25,7 @@ func TestServerOptionsDefaults(t *testing.T) {
 	assert.Equal(t, 10*time.Second, opts.ShutdownTimeout)
 	assert.Equal(t, 5*time.Second, opts.ReadHeaderTimeout)
 	assert.Equal(t, 5*time.Second, opts.HealthCheckTimeout)
+	assert.Equal(t, int64(1<<20), opts.MaxBodyBytes)
 }
 
 func TestSetRouter(t *testing.T) {
@@ -137,4 +138,12 @@ func TestSetHealthCheckTimeout(t *testing.T) {
 	opts.SetHealthCheckTimeout(2 * time.Second)
 
 	assert.Equal(t, 2*time.Second, opts.HealthCheckTimeout)
+}
+
+func TestSetMaxBodyBytes(t *testing.T) {
+	opts := ServerOptions()
+
+	opts.SetMaxBodyBytes(2048)
+
+	assert.Equal(t, int64(2048), opts.MaxBodyBytes)
 }
