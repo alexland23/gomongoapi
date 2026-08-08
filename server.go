@@ -144,6 +144,11 @@ type Server interface {
 	// Add custom POST request, path will be under the /custom route group
 	AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc)
 
+	// Add a custom route for an arbitrary HTTP method (e.g. PUT, DELETE, PATCH),
+	// path will be under the /custom route group. AddCustomGET/AddCustomPOST are
+	// thin wrappers around this for the common cases.
+	AddCustomRoute(method, relativePath string, handlers ...gin.HandlerFunc)
+
 	// Returns server mongo client.
 	// This can be used along side AddCustomGET() and AddCustomPost() to make custom routes that use the db.
 	GetMongoClient() *mongo.Client
@@ -933,12 +938,17 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 
 // Add custom GET request, path will be under the /custom route group
 func (s *server) AddCustomGET(relativePath string, handlers ...gin.HandlerFunc) {
-	s.customRouter.GET(relativePath, handlers...)
+	s.AddCustomRoute(http.MethodGet, relativePath, handlers...)
 }
 
 // Add custom POST request, path will be under the /custom route group
 func (s *server) AddCustomPOST(relativePath string, handlers ...gin.HandlerFunc) {
-	s.customRouter.POST(relativePath, handlers...)
+	s.AddCustomRoute(http.MethodPost, relativePath, handlers...)
+}
+
+// Add a custom route for an arbitrary HTTP method, path will be under the /custom route group
+func (s *server) AddCustomRoute(method, relativePath string, handlers ...gin.HandlerFunc) {
+	s.customRouter.Handle(method, relativePath, handlers...)
 }
 
 // Returns server mongo client.

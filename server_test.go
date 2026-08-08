@@ -421,6 +421,35 @@ func TestAddCustomPOST(t *testing.T) {
 	assert.JSONEq(t, `{"hello":"world"}`, w.Body.String())
 }
 
+func TestAddCustomRoute(t *testing.T) {
+	s := newTestServer(nil, "", 100, 0)
+	s.AddCustomRoute(http.MethodPut, "/widgets/:id", func(c *gin.Context) {
+		c.JSON(http.StatusOK, bson.M{"id": c.Param("id")})
+	})
+	s.createRoutes()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/custom/widgets/42", nil)
+	s.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, `{"id":"42"}`, w.Body.String())
+}
+
+func TestAddCustomRoute_MethodNotAllowedForOtherVerbs(t *testing.T) {
+	s := newTestServer(nil, "", 100, 0)
+	s.AddCustomRoute(http.MethodDelete, "/widgets/:id", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+	s.createRoutes()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/custom/widgets/42", nil)
+	s.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
 // ---- GetMongoClient ----
 
 func TestGetMongoClient(t *testing.T) {
