@@ -3,6 +3,8 @@ package gomongoapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -100,12 +102,37 @@ func disconnectedClient(t *testing.T) *mongo.Client {
 	return client
 }
 
+// maxMongoDBNameLen is MongoDB's limit on database name length: names must
+// be fewer than 64 characters.
+const maxMongoDBNameLen = 63
+
 // testDBName derives a unique, valid Mongo database name from the current
 // test name so tests sharing the container don't collide with each other.
 func testDBName(t *testing.T) string {
 	t.Helper()
 	replacer := strings.NewReplacer("/", "_", " ", "_")
-	return "test_" + replacer.Replace(t.Name())
+	name := "test_" + replacer.Replace(t.Name())
+	if len(name) <= maxMongoDBNameLen {
+		return name
+	}
+
+	// Long test names (especially subtests) can exceed Mongo's database name
+	// limit. Truncate and append a short hash of the full name so distinct
+	// long names don't collide once truncated.
+	sum := sha1.Sum([]byte(name))
+	suffix := "_" + hex.EncodeToString(sum[:])[:8]
+	return name[:maxMongoDBNameLen-len(suffix)] + suffix
+}
+
+func TestTestDBName_StaysWithinMongoLimit(t *testing.T) {
+	shortName := testDBName(t)
+	assert.LessOrEqual(t, len(shortName), maxMongoDBNameLen)
+
+	t.Run("ThisIsADeliberatelyVeryLongSubtestNameChosenToExceedMongoDBsSixtyFourCharacterDatabaseNameLimitOnItsOwn", func(t *testing.T) {
+		longName := testDBName(t)
+		assert.LessOrEqual(t, len(longName), maxMongoDBNameLen)
+		assert.True(t, strings.HasPrefix(longName, "test_"))
+	})
 }
 
 // newTestServer builds a server directly (bypassing NewServer/Options) so
