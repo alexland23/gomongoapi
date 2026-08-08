@@ -3,9 +3,9 @@ package gomongoapi
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -119,8 +119,9 @@ func testDBName(t *testing.T) string {
 	// Long test names (especially subtests) can exceed Mongo's database name
 	// limit. Truncate and append a short hash of the full name so distinct
 	// long names don't collide once truncated.
-	sum := sha1.Sum([]byte(name))
-	suffix := "_" + hex.EncodeToString(sum[:])[:8]
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	suffix := fmt.Sprintf("_%08x", h.Sum32())
 	return name[:maxMongoDBNameLen-len(suffix)] + suffix
 }
 

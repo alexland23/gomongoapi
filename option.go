@@ -7,9 +7,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var (
-	ErrInvalidCustomRouteName = errors.New("invalid custom route name")
-)
+// ErrInvalidCustomRouteName is returned by SetCustomRouteName when the given name is reserved.
+var ErrInvalidCustomRouteName = errors.New("invalid custom route name")
 
 // Options contains options to configure the mongo api server
 type Options struct {
@@ -35,7 +34,7 @@ type Options struct {
 	DefaultDB string
 }
 
-// Returns server options with default values
+// ServerOptions returns server options with default values.
 func ServerOptions() *Options {
 	return &Options{
 		Router:          gin.Default(),

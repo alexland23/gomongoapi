@@ -1,4 +1,4 @@
-.PHONY: build test test-verbose cover cover-html vet tidy clean help
+.PHONY: build test test-verbose cover cover-html vet lint tidy clean help
 
 COVERAGE_OUT := coverage.out
 COVERAGE_HTML := coverage.html
@@ -7,6 +7,7 @@ help:
 	@echo "Available targets:"
 	@echo "  build        Build the package"
 	@echo "  vet          Run go vet"
+	@echo "  lint         Run golangci-lint"
 	@echo "  test         Run tests (Mongo-backed tests skip if Docker is unavailable)"
 	@echo "  test-verbose Run tests with -v"
 	@echo "  cover        Run tests and print per-function coverage"
@@ -19,6 +20,9 @@ build:
 
 vet:
 	go vet ./...
+
+lint:
+	golangci-lint run ./...
 
 test: vet
 	go test ./...
