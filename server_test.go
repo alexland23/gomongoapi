@@ -3,6 +3,8 @@ package gomongoapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -100,12 +102,37 @@ func disconnectedClient(t *testing.T) *mongo.Client {
 	return client
 }
 
+// maxMongoDBNameLen is MongoDB's limit on database name length: names must
+// be fewer than 64 characters.
+const maxMongoDBNameLen = 63
+
 // testDBName derives a unique, valid Mongo database name from the current
 // test name so tests sharing the container don't collide with each other.
 func testDBName(t *testing.T) string {
 	t.Helper()
 	replacer := strings.NewReplacer("/", "_", " ", "_")
-	return "test_" + replacer.Replace(t.Name())
+	name := "test_" + replacer.Replace(t.Name())
+	if len(name) <= maxMongoDBNameLen {
+		return name
+	}
+
+	// Long test names (especially subtests) can exceed Mongo's database name
+	// limit. Truncate and append a short hash of the full name so distinct
+	// long names don't collide once truncated.
+	sum := sha1.Sum([]byte(name))
+	suffix := "_" + hex.EncodeToString(sum[:])[:8]
+	return name[:maxMongoDBNameLen-len(suffix)] + suffix
+}
+
+func TestTestDBName_StaysWithinMongoLimit(t *testing.T) {
+	shortName := testDBName(t)
+	assert.LessOrEqual(t, len(shortName), maxMongoDBNameLen)
+
+	t.Run("ThisIsADeliberatelyVeryLongSubtestNameChosenToExceedMongoDBsSixtyFourCharacterDatabaseNameLimitOnItsOwn", func(t *testing.T) {
+		longName := testDBName(t)
+		assert.LessOrEqual(t, len(longName), maxMongoDBNameLen)
+		assert.True(t, strings.HasPrefix(longName, "test_"))
+	})
 }
 
 // newTestServer builds a server directly (bypassing NewServer/Options) so
@@ -651,6 +678,10 @@ func TestCollectionAggregate_NonArrayAggregateField(t *testing.T) {
 }
 
 func TestCollectionAggregate_MissingAggregateFieldUsesEmptyPipeline(t *testing.T) {
+	// Deliberate behavior: a body with no recognizable pipeline field (under any
+	// casing of "aggregate") stays a 200 with an empty pipeline rather than a 400,
+	// so callers can intentionally fetch an entire small collection without
+	// constructing a no-op pipeline.
 	client := requireMongo(t)
 	dbName := testDBName(t)
 	ctx := context.Background()
@@ -669,6 +700,43 @@ func TestCollectionAggregate_MissingAggregateFieldUsesEmptyPipeline(t *testing.T
 	var results []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
 	assert.Len(t, results, 1)
+}
+
+func TestCollectionAggregate_LowercaseAggregateKeyIsApplied(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a", "qty": 1},
+		bson.M{"name": "a", "qty": 3},
+		bson.M{"name": "b", "qty": 5},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	body := `{"aggregate":[{"$match":{"name":"a"}},{"$group":{"_id":"$name","total":{"$sum":"$qty"}}}]}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", body)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 1)
+	assert.EqualValues(t, 4, results[0]["total"])
+}
+
+func TestCollectionAggregate_NonArrayLowercaseAggregateField(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"aggregate":"not-an-array"}`)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "Aggregate field must be an array")
 }
 
 func TestCollectionAggregate_Success(t *testing.T) {
