@@ -21,9 +21,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 // Shared MongoDB instance, backed by testcontainers, used by tests that need
@@ -59,7 +59,7 @@ func runTestMain(m *testing.M) int {
 		return m.Run()
 	}
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	client, err := mongo.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
 		sharedMongoErr = err
 		return m.Run()
@@ -98,7 +98,7 @@ func disconnectedClient(t *testing.T) *mongo.Client {
 	requireMongo(t)
 
 	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(sharedMongoURI))
+	client, err := mongo.Connect(options.Client().ApplyURI(sharedMongoURI))
 	require.NoError(t, err)
 	require.NoError(t, client.Disconnect(ctx))
 
@@ -1006,7 +1006,7 @@ func TestWarnIfWritableCredentials_WritableUserWarns(t *testing.T) {
 	uri, err := container.ConnectionString(ctx)
 	require.NoError(t, err)
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	client, err := mongo.Connect(options.Client().ApplyURI(uri))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Disconnect(ctx) })
 	require.NoError(t, client.Ping(ctx, nil))

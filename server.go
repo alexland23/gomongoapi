@@ -72,9 +72,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 // defaultConnectTimeout bounds how long Start waits for the initial Mongo
@@ -303,7 +303,7 @@ func (s *server) Start() error {
 	var err error
 
 	// Create MongoDB Connection
-	s.mongoClient, err = mongo.Connect(connectCtx, s.mongoClientOpts)
+	s.mongoClient, err = mongo.Connect(s.mongoClientOpts)
 	if err != nil {
 		return err
 	}
