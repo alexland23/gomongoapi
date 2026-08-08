@@ -283,20 +283,28 @@ func (s *server) collectionFind(ctx *gin.Context) {
 		return
 	}
 
-	// Get limit, if none was passed default to default value
-	limitString := ctx.DefaultQuery("limit", s.findLimit)
+	// Get limit, if none was passed default to default value. Track whether the
+	// caller actually passed one so it can be distinguished from the server default below.
+	limitParam, limitPassed := ctx.GetQuery("limit")
+	limitString := limitParam
+	if !limitPassed {
+		limitString = s.findLimit
+	}
 	limit, err := strconv.Atoi(limitString)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
 		return
 	}
 
-	// If max limit is set, ensure passed limit is not greater than it.
-	if s.maxLimit != 0 {
-		if limit > s.maxLimit {
+	// If max limit is set and the limit exceeds it: reject an explicit caller-supplied
+	// limit, but silently clamp the server-side default so FindMaxLimit < FindLimit
+	// doesn't break every request that omits "limit".
+	if s.maxLimit != 0 && limit > s.maxLimit {
+		if limitPassed {
 			ctx.String(http.StatusBadRequest, "Passed limit is greater than max limit set by server")
 			return
 		}
+		limit = s.maxLimit
 	}
 
 	// Get filter from request body
