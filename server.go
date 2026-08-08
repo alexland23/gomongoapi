@@ -375,6 +375,7 @@ func (s *server) collectionCount(ctx *gin.Context) {
 
 // Runs an aggregate on the collection
 // /collections/:name/aggregate
+// Valid URL parameter are 'database' and 'limit'
 // Request body should contain the aggregate command, the "aggregate" key is matched case-insensitively
 //	ex) Request Body: {"Aggregate": [{"$match": { "UserName": "Jon" }}]
 func (s *server) collectionAggregate(ctx *gin.Context) {
@@ -399,9 +400,25 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		return
 	}
 
+	// Get limit, if none was passed default to default value
+	limitString := ctx.DefaultQuery("limit", s.findLimit)
+	limit, err := strconv.Atoi(limitString)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
+		return
+	}
+
+	// If max limit is set, ensure passed limit is not greater than it.
+	if s.maxLimit != 0 {
+		if limit > s.maxLimit {
+			ctx.String(http.StatusBadRequest, "Passed limit is greater than max limit set by server")
+			return
+		}
+	}
+
 	// Get request body
 	var reqBody map[string]interface{}
-	err := ctx.ShouldBind(&reqBody)
+	err = ctx.ShouldBind(&reqBody)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
@@ -423,6 +440,12 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		}
 		break
 	}
+
+	// Cap the result count by appending a trailing $limit stage. This is
+	// applied unconditionally, even if the caller's pipeline ends in a
+	// $group or $sort, since a final $limit bounds the result count
+	// regardless of what produced it.
+	pipeLine = append(pipeLine, bson.M{"$limit": limit})
 
 	opts := options.Aggregate()
 	opts.SetAllowDiskUse(true)
