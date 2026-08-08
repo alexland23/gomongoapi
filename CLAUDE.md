@@ -19,6 +19,7 @@ Use the `Makefile` targets rather than raw `go` commands where possible:
 ```sh
 make build        # go build ./...
 make vet           # go vet ./...
+make lint          # golangci-lint run ./... (requires golangci-lint installed locally)
 make test          # go vet, then go test ./... (Mongo-backed tests skip if Docker is unavailable)
 make test-verbose  # same, with -v
 make cover         # test with coverage, print per-function coverage

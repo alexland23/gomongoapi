@@ -108,8 +108,7 @@ type server struct {
 	maxLimit        int
 }
 
-// Create a new server
-// Must pass in Mongo Client Options
+// NewServer creates a new server. Must pass in Mongo Client Options.
 func NewServer(opts *Options) Server {
 
 	router := opts.Router
