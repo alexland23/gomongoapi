@@ -15,7 +15,7 @@ func TestServerOptionsDefaults(t *testing.T) {
 
 	require.NotNil(t, opts)
 	assert.NotNil(t, opts.Router)
-	assert.Equal(t, ":8080", opts.Address)
+	assert.Equal(t, "localhost:8080", opts.Address)
 	assert.Equal(t, "custom", opts.CustomRouteName)
 	assert.NotNil(t, opts.MongoClientOpts)
 	assert.Equal(t, 1000, opts.FindLimit)
@@ -26,6 +26,7 @@ func TestServerOptionsDefaults(t *testing.T) {
 	assert.Equal(t, 5*time.Second, opts.ReadHeaderTimeout)
 	assert.Equal(t, 5*time.Second, opts.HealthCheckTimeout)
 	assert.Equal(t, int64(1<<20), opts.MaxBodyBytes)
+	assert.False(t, opts.AllowUnsafeOperators)
 }
 
 func TestSetRouter(t *testing.T) {
@@ -146,4 +147,12 @@ func TestSetMaxBodyBytes(t *testing.T) {
 	opts.SetMaxBodyBytes(2048)
 
 	assert.Equal(t, int64(2048), opts.MaxBodyBytes)
+}
+
+func TestSetAllowUnsafeOperators(t *testing.T) {
+	opts := ServerOptions()
+
+	opts.SetAllowUnsafeOperators(true)
+
+	assert.True(t, opts.AllowUnsafeOperators)
 }

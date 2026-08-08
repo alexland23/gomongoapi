@@ -16,7 +16,11 @@ type Options struct {
 	// Gin engine that server will use, gin.Default() is the default value.
 	Router *gin.Engine
 
-	// Server address that the gin router with use. Default is :8080
+	// Server address that the gin router will use. Default is "localhost:8080", so the
+	// server is not reachable off the host unless you opt in to a non-loopback address
+	// (e.g. SetAddress(":8080") to listen on all interfaces) via SetAddress. Note Docker
+	// port publishing (`-p`) requires binding to a non-loopback address inside the
+	// container; see examples/simpleDemo, which sets this explicitly.
 	Address string
 
 	// Optional field to set custom route group name which will be used if user adds custom routes. Default is 'custom'.
@@ -54,22 +58,30 @@ type Options struct {
 	// filters and pipelines). Requests whose body exceeds this are rejected with 413. 0 disables
 	// the limit. Default is 1 MiB.
 	MaxBodyBytes int64
+
+	// If false (default), find/count filters and aggregate pipelines are rejected with 400 if
+	// they contain $where, $function, $out, or $merge anywhere, including nested inside
+	// $and/$or/$expr or a pipeline stage. $where/$function can execute arbitrary server-side
+	// JavaScript; $out/$merge can write to or overwrite a collection. Set true to disable this
+	// check, e.g. if you trust your callers and have a legitimate need for one of these.
+	AllowUnsafeOperators bool
 }
 
 // ServerOptions returns server options with default values.
 func ServerOptions() *Options {
 	return &Options{
-		Router:             gin.Default(),
-		Address:            ":8080",
-		CustomRouteName:    "custom",
-		MongoClientOpts:    options.Client(),
-		FindLimit:          1000,
-		FindMaxLimit:       0,
-		ConnectTimeout:     defaultConnectTimeout,
-		ShutdownTimeout:    defaultShutdownTimeout,
-		ReadHeaderTimeout:  defaultReadHeaderTimeout,
-		HealthCheckTimeout: defaultHealthCheckTimeout,
-		MaxBodyBytes:       defaultMaxBodyBytes,
+		Router:               gin.Default(),
+		Address:              "localhost:8080",
+		CustomRouteName:      "custom",
+		MongoClientOpts:      options.Client(),
+		FindLimit:            1000,
+		FindMaxLimit:         0,
+		ConnectTimeout:       defaultConnectTimeout,
+		ShutdownTimeout:      defaultShutdownTimeout,
+		ReadHeaderTimeout:    defaultReadHeaderTimeout,
+		HealthCheckTimeout:   defaultHealthCheckTimeout,
+		MaxBodyBytes:         defaultMaxBodyBytes,
+		AllowUnsafeOperators: false,
 	}
 }
 
@@ -142,4 +154,10 @@ func (o *Options) SetHealthCheckTimeout(healthCheckTimeout time.Duration) {
 // group. 0 disables the limit.
 func (o *Options) SetMaxBodyBytes(maxBodyBytes int64) {
 	o.MaxBodyBytes = maxBodyBytes
+}
+
+// SetAllowUnsafeOperators sets whether $where, $function, $out, and $merge are allowed in
+// find/count filters and aggregate pipelines. False (the default) rejects them with 400.
+func (o *Options) SetAllowUnsafeOperators(allow bool) {
+	o.AllowUnsafeOperators = allow
 }

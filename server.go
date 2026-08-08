@@ -57,6 +57,7 @@ package gomongoapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,6 +130,14 @@ type Server interface {
 	// silently doing nothing, since this is commonly used as an auth hook.
 	SetCustomMiddleware(middleware ...gin.HandlerFunc)
 
+	// SetAPIKey installs a built-in check on the /api group: requests must send the given
+	// key in the X-API-Key header or get 401 Unauthorized. It's a convenience wrapper
+	// around SetAPIMiddleware for callers who don't already have their own gateway auth in
+	// front of the server; the same "must be called before Start()" ordering constraint
+	// applies (see SetAPIMiddleware). For anything beyond a single shared secret (per-caller
+	// keys, JWT, OAuth), use SetAPIMiddleware directly instead.
+	SetAPIKey(apiKey string)
+
 	// Add custom GET request, path will be under the /custom route group
 	AddCustomGET(relativePath string, handlers ...gin.HandlerFunc)
 
@@ -149,11 +158,12 @@ type server struct {
 	address      string
 
 	// Mongo fields
-	mongoClientOpts *options.ClientOptions
-	mongoClient     *mongo.Client
-	defaultDB       string
-	findLimit       string
-	maxLimit        int
+	mongoClientOpts      *options.ClientOptions
+	mongoClient          *mongo.Client
+	defaultDB            string
+	findLimit            string
+	maxLimit             int
+	allowUnsafeOperators bool
 
 	// Timeouts for startup and shutdown. Populated from Options by
 	// NewServer; tests construct a *server directly to override them.
@@ -190,18 +200,19 @@ func NewServer(opts *Options) Server {
 	findLimit := strconv.Itoa(opts.FindLimit)
 
 	return &server{
-		mongoClientOpts:    opts.MongoClientOpts,
-		router:             router,
-		apiRouter:          apiRouter,
-		customRouter:       customRouter,
-		address:            opts.Address,
-		defaultDB:          opts.DefaultDB,
-		findLimit:          findLimit,
-		maxLimit:           opts.FindMaxLimit,
-		connectTimeout:     opts.ConnectTimeout,
-		shutdownTimeout:    opts.ShutdownTimeout,
-		readHeaderTimeout:  opts.ReadHeaderTimeout,
-		healthCheckTimeout: opts.HealthCheckTimeout,
+		mongoClientOpts:      opts.MongoClientOpts,
+		router:               router,
+		apiRouter:            apiRouter,
+		customRouter:         customRouter,
+		address:              opts.Address,
+		defaultDB:            opts.DefaultDB,
+		findLimit:            findLimit,
+		maxLimit:             opts.FindMaxLimit,
+		connectTimeout:       opts.ConnectTimeout,
+		shutdownTimeout:      opts.ShutdownTimeout,
+		readHeaderTimeout:    opts.ReadHeaderTimeout,
+		healthCheckTimeout:   opts.HealthCheckTimeout,
+		allowUnsafeOperators: opts.AllowUnsafeOperators,
 	}
 }
 
@@ -215,6 +226,61 @@ func maxBodyBytesMiddleware(maxBodyBytes int64) gin.HandlerFunc {
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
 		}
 		c.Next()
+	}
+}
+
+// writeActions are Mongo privilege actions that indicate the connected user can write
+// data. Used by warnIfWritableCredentials to flag when MongoClientOpts isn't scoped to a
+// read-only user, per the README Security section's "Use a read-only Mongo user" guidance.
+var writeActions = map[string]bool{
+	"insert": true,
+	"update": true,
+	"remove": true,
+}
+
+// connectionStatusPrivilege is one entry of authInfo.authenticatedUserPrivileges in the
+// connectionStatus admin command's response (with showPrivileges:true).
+type connectionStatusPrivilege struct {
+	Actions []string `bson:"actions"`
+}
+
+// connectionStatusResult decodes the subset of the connectionStatus command's response
+// needed to inspect the authenticated user's privileges.
+type connectionStatusResult struct {
+	AuthInfo struct {
+		AuthenticatedUserPrivileges []connectionStatusPrivilege `bson:"authenticatedUserPrivileges"`
+	} `bson:"authInfo"`
+}
+
+// hasWriteAction reports whether any privilege in privileges grants a write action, and if
+// so, which one (for the log message).
+func hasWriteAction(privileges []connectionStatusPrivilege) (action string, found bool) {
+	for _, priv := range privileges {
+		for _, action := range priv.Actions {
+			if writeActions[action] {
+				return action, true
+			}
+		}
+	}
+	return "", false
+}
+
+// warnIfWritableCredentials runs the connectionStatus admin command and logs a warning if
+// the authenticated user holds any write privilege on the connected Mongo cluster. This is
+// best-effort and advisory only: it never fails Start(), and a command failure (e.g. no
+// auth configured, or a custom role that disallows connectionStatus) is silently ignored
+// rather than surfaced — a read-only Mongo user remains the load-bearing control regardless
+// of whether this check can run, see the README Security section.
+func (s *server) warnIfWritableCredentials(ctx context.Context) {
+	cmd := bson.D{{Key: "connectionStatus", Value: 1}, {Key: "showPrivileges", Value: 1}}
+
+	var result connectionStatusResult
+	if err := s.mongoClient.Database("admin").RunCommand(ctx, cmd).Decode(&result); err != nil {
+		return
+	}
+
+	if action, found := hasWriteAction(result.AuthInfo.AuthenticatedUserPrivileges); found {
+		log.Printf("gomongoapi: configured MongoClientOpts credentials have write privileges (e.g. %q); a read-only Mongo user is strongly recommended, see README Security section", action)
 	}
 }
 
@@ -249,6 +315,8 @@ func (s *server) Start() error {
 	if err != nil {
 		return err
 	}
+
+	s.warnIfWritableCredentials(connectCtx)
 
 	// Ensure router isn't nil
 	if s.router == nil {
@@ -333,6 +401,27 @@ func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
 func (s *server) SetCustomMiddleware(middleware ...gin.HandlerFunc) {
 	s.warnIfRoutesRegistered("SetCustomMiddleware")
 	s.customRouter.Use(middleware...)
+}
+
+// SetAPIKey installs a built-in check on the /api group: requests must send the given key
+// in the X-API-Key header or get 401 Unauthorized. It's a thin wrapper around
+// SetAPIMiddleware, so the same "must be called before Start()" ordering constraint
+// applies.
+func (s *server) SetAPIKey(apiKey string) {
+	s.SetAPIMiddleware(apiKeyMiddleware(apiKey))
+}
+
+// apiKeyMiddleware rejects requests whose X-API-Key header doesn't match apiKey, using a
+// constant-time comparison so response timing can't be used to guess the key.
+func apiKeyMiddleware(apiKey string) gin.HandlerFunc {
+	key := []byte(apiKey)
+	return func(c *gin.Context) {
+		if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-API-Key")), key) != 1 {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		c.Next()
+	}
 }
 
 // warnIfRoutesRegistered logs loudly if routes have already been registered
@@ -459,6 +548,57 @@ func parseSortParam(raw string) (bson.D, error) {
 		sort = append(sort, bson.E{Key: key, Value: direction})
 	}
 	return sort, nil
+}
+
+// bannedOperators are Mongo operators rejected by default in find/count filters and
+// aggregate pipelines: $where/$function can execute arbitrary server-side JavaScript, and
+// $out/$merge can write to or overwrite a collection via what looks like a query API. See
+// the README Security section. Opt out via Options.AllowUnsafeOperators.
+var bannedOperators = map[string]bool{
+	"$where":    true,
+	"$function": true,
+	"$out":      true,
+	"$merge":    true,
+}
+
+// findBannedOperator recursively walks a decoded JSON value (maps/slices, as produced by
+// encoding/json) looking for any key in bannedOperators, so a banned operator nested inside
+// $and/$or/$expr or a pipeline stage can't bypass a shallow, top-level-only check.
+func findBannedOperator(v any) (op string, found bool) {
+	switch val := v.(type) {
+	case map[string]any:
+		for k, sub := range val {
+			if bannedOperators[k] {
+				return k, true
+			}
+			if op, found = findBannedOperator(sub); found {
+				return op, found
+			}
+		}
+	case bson.M:
+		return findBannedOperator(map[string]any(val))
+	case []any:
+		for _, sub := range val {
+			if op, found = findBannedOperator(sub); found {
+				return op, found
+			}
+		}
+	}
+	return "", false
+}
+
+// endsInOutOrMerge reports whether pipeline's last stage is $out or $merge, which Mongo
+// requires to be the pipeline's terminal stage — collectionAggregate uses this to avoid
+// appending its own trailing $limit stage after one.
+func endsInOutOrMerge(pipeline []any) bool {
+	if len(pipeline) == 0 {
+		return false
+	}
+	stage, ok := pipeline[len(pipeline)-1].(map[string]any)
+	if !ok {
+		return false
+	}
+	return stage["$out"] != nil || stage["$merge"] != nil
 }
 
 // resolveDB determines the target database for a /api/collections/... route:
@@ -601,6 +741,13 @@ func (s *server) collectionFind(ctx *gin.Context) {
 		filter = bson.M{}
 	}
 
+	if !s.allowUnsafeOperators {
+		if op, found := findBannedOperator(map[string]any(filter)); found {
+			writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Filter contains disallowed operator %q; see Options.AllowUnsafeOperators", op))
+			return
+		}
+	}
+
 	opts := options.Find()
 	opts.SetLimit(int64(limit))
 	opts.SetAllowDiskUse(true)
@@ -657,6 +804,13 @@ func (s *server) collectionCount(ctx *gin.Context) {
 	}
 	if filter == nil {
 		filter = bson.M{}
+	}
+
+	if !s.allowUnsafeOperators {
+		if op, found := findBannedOperator(map[string]any(filter)); found {
+			writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Filter contains disallowed operator %q; see Options.AllowUnsafeOperators", op))
+			return
+		}
 	}
 
 	// Run find
@@ -740,11 +894,22 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		break
 	}
 
+	if !s.allowUnsafeOperators {
+		if op, found := findBannedOperator(pipeLine); found {
+			writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Pipeline contains disallowed stage/operator %q; see Options.AllowUnsafeOperators", op))
+			return
+		}
+	}
+
 	// Cap the result count by appending a trailing $limit stage. This is
 	// applied unconditionally, even if the caller's pipeline ends in a
 	// $group or $sort, since a final $limit bounds the result count
-	// regardless of what produced it.
-	pipeLine = append(pipeLine, bson.M{"$limit": limit})
+	// regardless of what produced it. Exception: $out/$merge (only reachable
+	// with AllowUnsafeOperators) must themselves be the pipeline's terminal
+	// stage, so a $limit can't be appended after one.
+	if !endsInOutOrMerge(pipeLine) {
+		pipeLine = append(pipeLine, bson.M{"$limit": limit})
+	}
 
 	opts := options.Aggregate()
 	opts.SetAllowDiskUse(true)

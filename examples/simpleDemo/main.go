@@ -41,6 +41,8 @@ func main() {
 	serverOpts := gomongoapi.ServerOptions()
 	serverOpts.SetMongoClientOpts(options.Client().ApplyURI(mongoURI))
 	serverOpts.SetDefaultDB(dbName)
+	// Listen on all interfaces so Docker's port publishing (docker-compose.yml) can reach
+	// this container; gomongoapi defaults to localhost-only, see README Security section.
 	serverOpts.SetAddress(":8080")
 
 	// Create server
