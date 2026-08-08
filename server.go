@@ -82,6 +82,10 @@ const defaultConnectTimeout = 10 * time.Second
 // signal is received.
 const defaultShutdownTimeout = 10 * time.Second
 
+// readHeaderTimeout bounds how long the HTTP server waits to read a
+// request's headers, guarding against slow-header (Slowloris) attacks.
+const readHeaderTimeout = 5 * time.Second
+
 // Server interface for mongo api server
 type Server interface {
 
@@ -202,8 +206,9 @@ func (s *server) Start() error {
 	s.createRoutes()
 
 	httpServer := &http.Server{
-		Addr:    s.address,
-		Handler: s.router,
+		Addr:              s.address,
+		Handler:           s.router,
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
 	// Listen for SIGINT/SIGTERM so a normal `docker stop`/`kubectl delete
