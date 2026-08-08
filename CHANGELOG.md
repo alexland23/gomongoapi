@@ -5,6 +5,29 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-08
+
+### Added
+
+- `Server.AddCustomRoute(method, relativePath string, handlers ...gin.HandlerFunc)` registers
+  a route under the `/custom` group for any HTTP method (`PUT`, `DELETE`, `PATCH`, etc.), not
+  just `GET`/`POST`. `AddCustomGET`/`AddCustomPOST` now delegate to it instead of duplicating
+  the registration call. (#36)
+- `example_test.go` with `ExampleNewServer` and `ExampleServer_AddCustomGET`, so pkg.go.dev
+  renders the README quick-start and custom-route snippets as runnable documentation. (#37)
+- `CONTRIBUTING.md`, a CI badge, and `scripts/release.sh` (tags a release, pushes it, creates
+  the GitHub release from the matching `CHANGELOG.md` section, and closes the milestone). (#38)
+
+### Changed
+
+- **Breaking:** migrated from `go.mongodb.org/mongo-driver` (v1, now in maintenance mode) to
+  `go.mongodb.org/mongo-driver/v2` throughout the library, test suite, `example_test.go`, and
+  `examples/simpleDemo`. The only source-level change required downstream is `mongo.Connect`,
+  which drops its `context.Context` parameter in v2 (`mongo.Connect(opts...)` instead of
+  `mongo.Connect(ctx, opts...)`); connection establishment is still bounded by
+  `Options.ConnectTimeout` via the subsequent `Ping`. `bson.M`/`bson.D`/`bson.E`, the
+  `options.*` builders, and all other call sites are source-compatible between v1 and v2. (#58)
+
 ## [1.1.0] - 2026-08-08
 
 ### Added
