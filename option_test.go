@@ -24,6 +24,7 @@ func TestServerOptionsDefaults(t *testing.T) {
 	assert.Equal(t, 10*time.Second, opts.ConnectTimeout)
 	assert.Equal(t, 10*time.Second, opts.ShutdownTimeout)
 	assert.Equal(t, 5*time.Second, opts.ReadHeaderTimeout)
+	assert.Equal(t, 5*time.Second, opts.HealthCheckTimeout)
 }
 
 func TestSetRouter(t *testing.T) {
@@ -128,4 +129,12 @@ func TestSetReadHeaderTimeout(t *testing.T) {
 	opts.SetReadHeaderTimeout(15 * time.Second)
 
 	assert.Equal(t, 15*time.Second, opts.ReadHeaderTimeout)
+}
+
+func TestSetHealthCheckTimeout(t *testing.T) {
+	opts := ServerOptions()
+
+	opts.SetHealthCheckTimeout(2 * time.Second)
+
+	assert.Equal(t, 2*time.Second, opts.HealthCheckTimeout)
 }

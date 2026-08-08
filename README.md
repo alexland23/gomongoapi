@@ -126,7 +126,8 @@ trusted internal caller, add a rate-limiting gin middleware (e.g.
 
 | Path                                | HTTP Verb | Body  | Result                                                                                                |
 | ------------------------------------ | --------- | ----- | ------------------------------------------------------------------------------------------------------ |
-| `/`                                   | GET       | Empty | Always 200, used to test the connection.                                                               |
+| `/`                                   | GET       | Empty | Always 200, used to test the connection (liveness).                                                    |
+| `/api/health`                         | GET       | Empty | Pings MongoDB; 200 if reachable, 503 otherwise (readiness).                                             |
 | `/api/databases`                      | GET       | Empty | Returns list of available databases, unless a default database is set.                                 |
 | `/api/collections`                    | GET       | Empty | Returns a list of collections for the default db or the one passed in the `database` url param.       |
 | `/api/collections/:name/find`         | POST      | JSON  | Returns the result of a find on collection `:name`. DB is either the default or `database` url param.  |
@@ -177,6 +178,7 @@ be customized with the setter methods below before being passed to `gomongoapi.N
 | `DefaultDB` / `SetDefaultDB(string)`            | none (unset)         | If set, all routes operate against this database and the `database` url param is not needed.    |
 | `FindLimit` / `SetFindLimit(int)`               | `1000`               | Default number of records returned by `find` and `aggregate` when no `limit` url param is passed. |
 | `FindMaxLimit` / `SetFindMaxLimit(int)`         | `0` (no limit)       | Upper bound on the `limit` url param for `find` and `aggregate`. Requests above this are rejected. |
+| `HealthCheckTimeout` / `SetHealthCheckTimeout(time.Duration)` | `5s`  | Upper bound on the Mongo ping issued by `/api/health`.                                          |
 
 ## Custom routes and middleware
 

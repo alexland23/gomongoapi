@@ -10,7 +10,8 @@ Available default routes:
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
 	| Path                             | HTTP Verb | Body  | Result                                                                                               |
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
-	| /                                |    GET    | Empty | Always 200, test connection.                                                                         |
+	| /                                |    GET    | Empty | Always 200, test connection (liveness).                                                              |
+	| /api/health                      |    GET    | Empty | Pings MongoDB, 200 if reachable, 503 otherwise (readiness).                                          |
 	| /api/databases                   |    GET    | Empty | Returns list of available databases, unless a default is set.                                        |
 	| /api/collections                 |    GET    | Empty | Returns a list collections to the default db or the one passed in url param.                         |
 	| /api/collections/:name/find      |    POST   | JSON  | Returns result of find on the collection name. DB is either default or one passed in url param.      |
@@ -88,6 +89,11 @@ const defaultShutdownTimeout = 10 * time.Second
 // request's headers, guarding against slow-header (Slowloris) attacks.
 const defaultReadHeaderTimeout = 5 * time.Second
 
+// defaultHealthCheckTimeout bounds how long the /api/health route waits on
+// its Mongo ping, so a hung Mongo host can't make the health check itself
+// hang.
+const defaultHealthCheckTimeout = 5 * time.Second
+
 // Server interface for mongo api server
 type Server interface {
 
@@ -133,9 +139,10 @@ type server struct {
 
 	// Timeouts for startup and shutdown. Populated from Options by
 	// NewServer; tests construct a *server directly to override them.
-	connectTimeout    time.Duration
-	shutdownTimeout   time.Duration
-	readHeaderTimeout time.Duration
+	connectTimeout     time.Duration
+	shutdownTimeout    time.Duration
+	readHeaderTimeout  time.Duration
+	healthCheckTimeout time.Duration
 }
 
 // NewServer creates a new server. Must pass in Mongo Client Options.
@@ -155,17 +162,18 @@ func NewServer(opts *Options) Server {
 	findLimit := strconv.Itoa(opts.FindLimit)
 
 	return &server{
-		mongoClientOpts:   opts.MongoClientOpts,
-		router:            router,
-		apiRouter:         apiRouter,
-		customRouter:      customRouter,
-		address:           opts.Address,
-		defaultDB:         opts.DefaultDB,
-		findLimit:         findLimit,
-		maxLimit:          opts.FindMaxLimit,
-		connectTimeout:    opts.ConnectTimeout,
-		shutdownTimeout:   opts.ShutdownTimeout,
-		readHeaderTimeout: opts.ReadHeaderTimeout,
+		mongoClientOpts:    opts.MongoClientOpts,
+		router:             router,
+		apiRouter:          apiRouter,
+		customRouter:       customRouter,
+		address:            opts.Address,
+		defaultDB:          opts.DefaultDB,
+		findLimit:          findLimit,
+		maxLimit:           opts.FindMaxLimit,
+		connectTimeout:     opts.ConnectTimeout,
+		shutdownTimeout:    opts.ShutdownTimeout,
+		readHeaderTimeout:  opts.ReadHeaderTimeout,
+		healthCheckTimeout: opts.HealthCheckTimeout,
 	}
 }
 
@@ -254,6 +262,7 @@ func (s *server) createRoutes() {
 	})
 
 	// Create api group
+	s.apiRouter.GET("/health", s.health)
 	s.apiRouter.GET("/databases", s.getDatabases)
 	s.apiRouter.GET("/collections", s.getCollections)
 	s.apiRouter.POST("/collections/:name/find", s.collectionFind)
@@ -271,6 +280,25 @@ func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
 // This allows custom additions like logging, auth, etc
 func (s *server) SetCustomMiddleware(middleware ...gin.HandlerFunc) {
 	s.customRouter.Use(middleware...)
+}
+
+// Route to check readiness: pings MongoDB and returns 503 if it's
+// unreachable, unlike "/" which always returns 200 regardless of the Mongo
+// connection's state. The ping is bounded by healthCheckTimeout so a hung
+// Mongo host can't make this route itself hang.
+func (s *server) health(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), s.healthCheckTimeout)
+	defer cancel()
+
+	if err := s.mongoClient.Ping(ctx, nil); err != nil {
+		c.JSON(http.StatusServiceUnavailable, bson.M{
+			"status": "error",
+			"error":  fmt.Sprintf("Error pinging MongoDB: %s", err.Error()),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, bson.M{"status": "ok"})
 }
 
 // Route to get all database names

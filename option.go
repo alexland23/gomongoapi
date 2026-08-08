@@ -45,20 +45,25 @@ type Options struct {
 	// Upper bound on how long the HTTP server waits to read a request's headers, guarding against
 	// slow-header (Slowloris) attacks. Default is 5 seconds.
 	ReadHeaderTimeout time.Duration
+
+	// Upper bound on the Mongo ping issued by the /api/health readiness route, so a hung Mongo
+	// host can't make the health check itself hang. Default is 5 seconds.
+	HealthCheckTimeout time.Duration
 }
 
 // ServerOptions returns server options with default values.
 func ServerOptions() *Options {
 	return &Options{
-		Router:            gin.Default(),
-		Address:           ":8080",
-		CustomRouteName:   "custom",
-		MongoClientOpts:   options.Client(),
-		FindLimit:         1000,
-		FindMaxLimit:      0,
-		ConnectTimeout:    defaultConnectTimeout,
-		ShutdownTimeout:   defaultShutdownTimeout,
-		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		Router:             gin.Default(),
+		Address:            ":8080",
+		CustomRouteName:    "custom",
+		MongoClientOpts:    options.Client(),
+		FindLimit:          1000,
+		FindMaxLimit:       0,
+		ConnectTimeout:     defaultConnectTimeout,
+		ShutdownTimeout:    defaultShutdownTimeout,
+		ReadHeaderTimeout:  defaultReadHeaderTimeout,
+		HealthCheckTimeout: defaultHealthCheckTimeout,
 	}
 }
 
@@ -119,4 +124,10 @@ func (o *Options) SetShutdownTimeout(shutdownTimeout time.Duration) {
 // request's headers.
 func (o *Options) SetReadHeaderTimeout(readHeaderTimeout time.Duration) {
 	o.ReadHeaderTimeout = readHeaderTimeout
+}
+
+// SetHealthCheckTimeout sets the upper bound on the Mongo ping issued by the /api/health
+// readiness route.
+func (o *Options) SetHealthCheckTimeout(healthCheckTimeout time.Duration) {
+	o.HealthCheckTimeout = healthCheckTimeout
 }
