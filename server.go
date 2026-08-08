@@ -297,21 +297,30 @@ func (s *server) getDatabases(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// resolveDB determines the target database for a /api/collections/... route:
+// Options.DefaultDB if set, otherwise the "database" query param. If neither
+// is available it writes the 400 response itself and returns ok=false, so
+// callers can just `return` when ok is false.
+func (s *server) resolveDB(ctx *gin.Context) (dbName string, ok bool) {
+	if s.defaultDB != "" {
+		return s.defaultDB, true
+	}
+
+	dbName, ok = ctx.GetQuery("database")
+	if !ok {
+		ctx.String(http.StatusBadRequest, "Database name was not passed, one is needed")
+		return "", false
+	}
+	return dbName, true
+}
+
 // Route to get all collection names for the queried database
 // /api/collections?database=app
 func (s *server) getCollections(c *gin.Context) {
 
-	var dbName string
-	// If user didn't set a default db, check to see if one was passed
-	if s.defaultDB == "" {
-		var ok bool
-		dbName, ok = c.GetQuery("database")
-		if !ok {
-			c.String(http.StatusBadRequest, "Database name was not passed, one is needed")
-			return
-		}
-	} else {
-		dbName = s.defaultDB
+	dbName, ok := s.resolveDB(c)
+	if !ok {
+		return
 	}
 
 	collNames, err := s.mongoClient.Database(dbName).ListCollectionNames(c.Request.Context(), bson.M{})
@@ -334,17 +343,9 @@ func (s *server) getCollections(c *gin.Context) {
 //	ex) Request Body: {"UserName": "Jon"}
 func (s *server) collectionFind(ctx *gin.Context) {
 
-	// If user didn't set a default db, check to see if one was passed
-	var dbName string
-	if s.defaultDB == "" {
-		var ok bool
-		dbName, ok = ctx.GetQuery("database")
-		if !ok {
-			ctx.String(http.StatusBadRequest, "Database name was not passed, one is needed")
-			return
-		}
-	} else {
-		dbName = s.defaultDB
+	dbName, ok := s.resolveDB(ctx)
+	if !ok {
+		return
 	}
 
 	// Get collection name, return error if one isn't passed
@@ -415,17 +416,9 @@ func (s *server) collectionFind(ctx *gin.Context) {
 //	ex) Request Body: {"UserName": "Jon"}
 func (s *server) collectionCount(ctx *gin.Context) {
 
-	// If user didn't set a default db, check to see if one was passed
-	var dbName string
-	if s.defaultDB == "" {
-		var ok bool
-		dbName, ok = ctx.GetQuery("database")
-		if !ok {
-			ctx.String(http.StatusBadRequest, "Database name was not passed, one is needed")
-			return
-		}
-	} else {
-		dbName = s.defaultDB
+	dbName, ok := s.resolveDB(ctx)
+	if !ok {
+		return
 	}
 
 	// Get collection name, return error if one isn't passed
@@ -461,17 +454,9 @@ func (s *server) collectionCount(ctx *gin.Context) {
 //	ex) Request Body: {"Aggregate": [{"$match": { "UserName": "Jon" }}]
 func (s *server) collectionAggregate(ctx *gin.Context) {
 
-	// If user didn't set a default db, check to see if one was passed
-	var dbName string
-	if s.defaultDB == "" {
-		var ok bool
-		dbName, ok = ctx.GetQuery("database")
-		if !ok {
-			ctx.String(http.StatusBadRequest, "Database name was not passed, one is needed")
-			return
-		}
-	} else {
-		dbName = s.defaultDB
+	dbName, ok := s.resolveDB(ctx)
+	if !ok {
+		return
 	}
 
 	// Get collection name, return error if one isn't passed
