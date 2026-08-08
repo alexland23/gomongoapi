@@ -22,7 +22,7 @@ Available default routes:
 
 To use the package, user must create the server options and at the minimum set the mongodb client options to connect to
 the db. Once the options are made, they can be passed to create a new server. Server Start() function will run the server
-and block until it encounters an error.
+and block until a SIGINT/SIGTERM is received or it encounters an error, gracefully shutting down before returning.
 
 Example
 
@@ -56,11 +56,15 @@ package gomongoapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
@@ -68,11 +72,27 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// defaultConnectTimeout bounds how long Start waits for the initial Mongo
+// Connect+Ping before giving up, so a hung Mongo host can't block startup
+// indefinitely.
+const defaultConnectTimeout = 10 * time.Second
+
+// defaultShutdownTimeout bounds how long graceful HTTP shutdown and the
+// subsequent Mongo disconnect are each allowed to take once a shutdown
+// signal is received.
+const defaultShutdownTimeout = 10 * time.Second
+
+// defaultReadHeaderTimeout bounds how long the HTTP server waits to read a
+// request's headers, guarding against slow-header (Slowloris) attacks.
+const defaultReadHeaderTimeout = 5 * time.Second
+
 // Server interface for mongo api server
 type Server interface {
 
 	// Start new server
-	// This function will block unless an error occurs
+	// This function blocks until a SIGINT/SIGTERM is received or an error
+	// occurs, at which point it shuts down the HTTP server and disconnects
+	// from MongoDB before returning.
 	Start() error
 
 	// Add custom middleware in the /api router group.
@@ -108,6 +128,12 @@ type server struct {
 	defaultDB       string
 	findLimit       string
 	maxLimit        int
+
+	// Timeouts for startup and shutdown. Populated from Options by
+	// NewServer; tests construct a *server directly to override them.
+	connectTimeout    time.Duration
+	shutdownTimeout   time.Duration
+	readHeaderTimeout time.Duration
 }
 
 // NewServer creates a new server. Must pass in Mongo Client Options.
@@ -127,36 +153,48 @@ func NewServer(opts *Options) Server {
 	findLimit := strconv.Itoa(opts.FindLimit)
 
 	return &server{
-		mongoClientOpts: opts.MongoClientOpts,
-		router:          router,
-		apiRouter:       apiRouter,
-		customRouter:    customRouter,
-		address:         opts.Address,
-		defaultDB:       opts.DefaultDB,
-		findLimit:       findLimit,
-		maxLimit:        opts.FindMaxLimit,
+		mongoClientOpts:   opts.MongoClientOpts,
+		router:            router,
+		apiRouter:         apiRouter,
+		customRouter:      customRouter,
+		address:           opts.Address,
+		defaultDB:         opts.DefaultDB,
+		findLimit:         findLimit,
+		maxLimit:          opts.FindMaxLimit,
+		connectTimeout:    opts.ConnectTimeout,
+		shutdownTimeout:   opts.ShutdownTimeout,
+		readHeaderTimeout: opts.ReadHeaderTimeout,
 	}
 }
 
 // Start new server
-// This function will block unless an error occurs
+// This function blocks until a SIGINT/SIGTERM is received or an error
+// occurs, at which point it shuts down the HTTP server and disconnects
+// from MongoDB before returning.
 func (s *server) Start() error {
+
+	// Bound the initial Connect+Ping so a hung Mongo host can't block
+	// startup indefinitely.
+	connectCtx, cancel := context.WithTimeout(context.Background(), s.connectTimeout)
+	defer cancel()
 
 	var err error
 
 	// Create MongoDB Connection
-	s.mongoClient, err = mongo.Connect(context.TODO(), s.mongoClientOpts)
+	s.mongoClient, err = mongo.Connect(connectCtx, s.mongoClientOpts)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err = s.mongoClient.Disconnect(context.TODO()); err != nil {
-			log.Printf("Error while disconnecting from MongoDB: %s\n", err.Error())
+		disconnectCtx, disconnectCancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
+		defer disconnectCancel()
+		if disconnectErr := s.mongoClient.Disconnect(disconnectCtx); disconnectErr != nil {
+			log.Printf("Error while disconnecting from MongoDB: %s\n", disconnectErr.Error())
 		}
 	}()
 
 	// Test the connection
-	err = s.mongoClient.Ping(context.TODO(), nil)
+	err = s.mongoClient.Ping(connectCtx, nil)
 	if err != nil {
 		return err
 	}
@@ -169,10 +207,40 @@ func (s *server) Start() error {
 	// Set routes
 	s.createRoutes()
 
-	// Start router, this will block until error occurs
-	err = s.router.Run(s.address)
+	httpServer := &http.Server{
+		Addr:              s.address,
+		Handler:           s.router,
+		ReadHeaderTimeout: s.readHeaderTimeout,
+	}
 
-	return err
+	// Listen for SIGINT/SIGTERM so a normal `docker stop`/`kubectl delete
+	// pod` triggers the graceful shutdown below instead of killing the
+	// process before the deferred Mongo disconnect above can run.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	serveErrCh := make(chan error, 1)
+	go func() {
+		if serveErr := httpServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			serveErrCh <- serveErr
+			return
+		}
+		serveErrCh <- nil
+	}()
+
+	// Block until either a shutdown signal arrives or the listener itself
+	// fails (e.g. address already in use); a listener failure has nothing
+	// left to gracefully shut down, so it's returned immediately.
+	select {
+	case <-ctx.Done():
+	case err = <-serveErrCh:
+		return err
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
+	defer shutdownCancel()
+
+	return httpServer.Shutdown(shutdownCtx)
 }
 
 // Sets the routes based on the mongo connection db and collections

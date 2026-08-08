@@ -2,6 +2,7 @@ package gomongoapi
 
 import (
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,9 @@ func TestServerOptionsDefaults(t *testing.T) {
 	assert.Equal(t, 1000, opts.FindLimit)
 	assert.Equal(t, 0, opts.FindMaxLimit)
 	assert.Equal(t, "", opts.DefaultDB)
+	assert.Equal(t, 10*time.Second, opts.ConnectTimeout)
+	assert.Equal(t, 10*time.Second, opts.ShutdownTimeout)
+	assert.Equal(t, 5*time.Second, opts.ReadHeaderTimeout)
 }
 
 func TestSetRouter(t *testing.T) {
@@ -100,4 +104,28 @@ func TestSetFindMaxLimit(t *testing.T) {
 	opts.SetFindMaxLimit(2000)
 
 	assert.Equal(t, 2000, opts.FindMaxLimit)
+}
+
+func TestSetConnectTimeout(t *testing.T) {
+	opts := ServerOptions()
+
+	opts.SetConnectTimeout(30 * time.Second)
+
+	assert.Equal(t, 30*time.Second, opts.ConnectTimeout)
+}
+
+func TestSetShutdownTimeout(t *testing.T) {
+	opts := ServerOptions()
+
+	opts.SetShutdownTimeout(30 * time.Second)
+
+	assert.Equal(t, 30*time.Second, opts.ShutdownTimeout)
+}
+
+func TestSetReadHeaderTimeout(t *testing.T) {
+	opts := ServerOptions()
+
+	opts.SetReadHeaderTimeout(15 * time.Second)
+
+	assert.Equal(t, 15*time.Second, opts.ReadHeaderTimeout)
 }
