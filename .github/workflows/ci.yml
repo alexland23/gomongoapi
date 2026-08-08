@@ -19,8 +19,16 @@ jobs:
       - name: go vet
         run: make vet
 
-      - name: go test
-        run: make test
+      - name: go test with coverage
+        run: make cover-html
+
+      - name: upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
 
   example-build:
     name: example module build
