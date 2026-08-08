@@ -147,13 +147,14 @@ func TestTestDBName_StaysWithinMongoLimit(t *testing.T) {
 func newTestServer(client *mongo.Client, defaultDB string, findLimit, findMaxLimit int) *server {
 	router := gin.New()
 	return &server{
-		router:       router,
-		apiRouter:    router.Group("/api"),
-		customRouter: router.Group("custom"),
-		mongoClient:  client,
-		defaultDB:    defaultDB,
-		findLimit:    strconv.Itoa(findLimit),
-		maxLimit:     findMaxLimit,
+		router:             router,
+		apiRouter:          router.Group("/api"),
+		customRouter:       router.Group("custom"),
+		mongoClient:        client,
+		defaultDB:          defaultDB,
+		findLimit:          strconv.Itoa(findLimit),
+		maxLimit:           findMaxLimit,
+		healthCheckTimeout: defaultHealthCheckTimeout,
 	}
 }
 
@@ -193,6 +194,7 @@ func TestNewServer(t *testing.T) {
 	opts.SetConnectTimeout(20 * time.Second)
 	opts.SetShutdownTimeout(15 * time.Second)
 	opts.SetReadHeaderTimeout(3 * time.Second)
+	opts.SetHealthCheckTimeout(2 * time.Second)
 	require.NoError(t, opts.SetCustomRouteName("myroutes"))
 
 	srv := NewServer(opts)
@@ -210,6 +212,7 @@ func TestNewServer(t *testing.T) {
 	assert.Equal(t, 20*time.Second, s.connectTimeout)
 	assert.Equal(t, 15*time.Second, s.shutdownTimeout)
 	assert.Equal(t, 3*time.Second, s.readHeaderTimeout)
+	assert.Equal(t, 2*time.Second, s.healthCheckTimeout)
 	require.NotNil(t, s.apiRouter)
 	require.NotNil(t, s.customRouter)
 	assert.Equal(t, "/api", s.apiRouter.BasePath())
@@ -244,6 +247,39 @@ func TestServer_RootRoute(t *testing.T) {
 	s.router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ---- /api/health ----
+
+func TestHealth_Success(t *testing.T) {
+	client := requireMongo(t)
+
+	s := newTestServer(client, "", 100, 0)
+	s.createRoutes()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	s.router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct{ Status string }
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "ok", body.Status)
+}
+
+func TestHealth_MongoUnreachable(t *testing.T) {
+	client := disconnectedClient(t)
+
+	s := newTestServer(client, "", 100, 0)
+	s.createRoutes()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	s.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error pinging MongoDB")
 }
 
 // ---- Middleware / custom routes ----
