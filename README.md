@@ -1,6 +1,7 @@
 # gomongoapi
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/alexland23/gomongoapi.svg)](https://pkg.go.dev/github.com/alexland23/gomongoapi)
+[![CI](https://github.com/alexland23/gomongoapi/actions/workflows/ci.yml/badge.svg)](https://github.com/alexland23/gomongoapi/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/alexland23/gomongoapi/branch/main/graph/badge.svg)](https://codecov.io/gh/alexland23/gomongoapi)
 
 `gomongoapi` is a pure Go package for standing up an HTTP server that exposes a MongoDB
