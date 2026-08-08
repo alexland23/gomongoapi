@@ -407,7 +407,14 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	}
 
 	// Get pipeline, if it doesn't exists an empty pipeline will be used
-	pipeLine := reqBody["Aggregate"].([]interface{})
+	var pipeLine []any
+	if rawPipeline, ok := reqBody["Aggregate"]; ok {
+		pipeLine, ok = rawPipeline.([]any)
+		if !ok {
+			ctx.String(http.StatusBadRequest, "Aggregate field must be an array")
+			return
+		}
+	}
 
 	opts := options.Aggregate()
 	opts.SetAllowDiskUse(true)
