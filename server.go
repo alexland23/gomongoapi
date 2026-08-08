@@ -82,9 +82,9 @@ const defaultConnectTimeout = 10 * time.Second
 // signal is received.
 const defaultShutdownTimeout = 10 * time.Second
 
-// readHeaderTimeout bounds how long the HTTP server waits to read a
+// defaultReadHeaderTimeout bounds how long the HTTP server waits to read a
 // request's headers, guarding against slow-header (Slowloris) attacks.
-const readHeaderTimeout = 5 * time.Second
+const defaultReadHeaderTimeout = 5 * time.Second
 
 // Server interface for mongo api server
 type Server interface {
@@ -129,10 +129,11 @@ type server struct {
 	findLimit       string
 	maxLimit        int
 
-	// Timeouts for startup and shutdown. Set to the default* constants by
+	// Timeouts for startup and shutdown. Populated from Options by
 	// NewServer; tests construct a *server directly to override them.
-	connectTimeout  time.Duration
-	shutdownTimeout time.Duration
+	connectTimeout    time.Duration
+	shutdownTimeout   time.Duration
+	readHeaderTimeout time.Duration
 }
 
 // NewServer creates a new server. Must pass in Mongo Client Options.
@@ -152,16 +153,17 @@ func NewServer(opts *Options) Server {
 	findLimit := strconv.Itoa(opts.FindLimit)
 
 	return &server{
-		mongoClientOpts: opts.MongoClientOpts,
-		router:          router,
-		apiRouter:       apiRouter,
-		customRouter:    customRouter,
-		address:         opts.Address,
-		defaultDB:       opts.DefaultDB,
-		findLimit:       findLimit,
-		maxLimit:        opts.FindMaxLimit,
-		connectTimeout:  defaultConnectTimeout,
-		shutdownTimeout: defaultShutdownTimeout,
+		mongoClientOpts:   opts.MongoClientOpts,
+		router:            router,
+		apiRouter:         apiRouter,
+		customRouter:      customRouter,
+		address:           opts.Address,
+		defaultDB:         opts.DefaultDB,
+		findLimit:         findLimit,
+		maxLimit:          opts.FindMaxLimit,
+		connectTimeout:    opts.ConnectTimeout,
+		shutdownTimeout:   opts.ShutdownTimeout,
+		readHeaderTimeout: opts.ReadHeaderTimeout,
 	}
 }
 
@@ -208,7 +210,7 @@ func (s *server) Start() error {
 	httpServer := &http.Server{
 		Addr:              s.address,
 		Handler:           s.router,
-		ReadHeaderTimeout: readHeaderTimeout,
+		ReadHeaderTimeout: s.readHeaderTimeout,
 	}
 
 	// Listen for SIGINT/SIGTERM so a normal `docker stop`/`kubectl delete

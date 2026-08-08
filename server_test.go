@@ -174,6 +174,9 @@ func TestNewServer(t *testing.T) {
 	opts.SetDefaultDB("app")
 	opts.SetFindLimit(50)
 	opts.SetFindMaxLimit(500)
+	opts.SetConnectTimeout(20 * time.Second)
+	opts.SetShutdownTimeout(15 * time.Second)
+	opts.SetReadHeaderTimeout(3 * time.Second)
 	require.NoError(t, opts.SetCustomRouteName("myroutes"))
 
 	srv := NewServer(opts)
@@ -188,6 +191,9 @@ func TestNewServer(t *testing.T) {
 	assert.Equal(t, "app", s.defaultDB)
 	assert.Equal(t, "50", s.findLimit)
 	assert.Equal(t, 500, s.maxLimit)
+	assert.Equal(t, 20*time.Second, s.connectTimeout)
+	assert.Equal(t, 15*time.Second, s.shutdownTimeout)
+	assert.Equal(t, 3*time.Second, s.readHeaderTimeout)
 	require.NotNil(t, s.apiRouter)
 	require.NotNil(t, s.customRouter)
 	assert.Equal(t, "/api", s.apiRouter.BasePath())
@@ -413,18 +419,16 @@ func TestStart_ConnectTimeout(t *testing.T) {
 			SetServerSelectionTimeout(30 * time.Second).
 			SetConnectTimeout(30 * time.Second),
 	)
+	opts.SetConnectTimeout(300 * time.Millisecond)
 
-	srv, ok := NewServer(opts).(*server)
-	require.True(t, ok)
-	srv.connectTimeout = 300 * time.Millisecond
-	srv.shutdownTimeout = defaultShutdownTimeout
+	srv := NewServer(opts)
 
 	start := time.Now()
 	err := srv.Start()
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
-	assert.Less(t, elapsed, 5*time.Second, "Start() should have aborted via connectTimeout, not the driver's own 30s timeout")
+	assert.Less(t, elapsed, 5*time.Second, "Start() should have aborted via Options.ConnectTimeout, not the driver's own 30s timeout")
 }
 
 // ---- getDatabases ----
