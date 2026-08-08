@@ -56,6 +56,7 @@ package gomongoapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -317,6 +318,41 @@ func bindJSONBody(ctx *gin.Context, v any) error {
 	return nil
 }
 
+// parseSortParam parses the "sort" url query param (a JSON object, e.g.
+// {"createdAt":-1,"name":1}) into an ordered sort specification for
+// options.Find().SetSort. It's decoded manually via encoding/json's token
+// stream rather than into a map, because Go map iteration order is
+// randomized and, for a multi-field sort, field order is significant.
+func parseSortParam(raw string) (bson.D, error) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, errors.New(`sort must be a JSON object, e.g. {"field":1}`)
+	}
+
+	var sort bson.D
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return nil, errors.New("sort keys must be strings")
+		}
+
+		var direction int
+		if err := dec.Decode(&direction); err != nil || (direction != 1 && direction != -1) {
+			return nil, fmt.Errorf("sort value for %q must be 1 or -1", key)
+		}
+		sort = append(sort, bson.E{Key: key, Value: direction})
+	}
+	return sort, nil
+}
+
 // resolveDB determines the target database for a /api/collections/... route:
 // Options.DefaultDB if set, otherwise the "database" query param. If neither
 // is available it writes the 400 response itself and returns ok=false, so
@@ -357,10 +393,15 @@ func (s *server) getCollections(c *gin.Context) {
 }
 
 // Runs a find on the collection. /collections/:name/find
-// Valid URL parameter are 'database' and 'limit'
-// Request body should have the find filter
+// Valid URL parameters are 'database', 'limit', 'skip', and 'sort'.
+// 'sort' is a JSON object url-encoded into the query string, e.g.
+// ?sort={"createdAt":-1}, since a JSON sort spec can't be a plain scalar.
+// Request body is the find filter, with an optional top-level "projection"
+// key (matched case-insensitively) pulled out as the projection spec;
+// remaining keys form the filter. This makes "projection" a reserved
+// top-level filter key.
 //
-//	ex) Request Body: {"UserName": "Jon"}
+//	ex) Request Body: {"UserName": "Jon", "projection": {"UserName": 1}}
 func (s *server) collectionFind(ctx *gin.Context) {
 
 	dbName, ok := s.resolveDB(ctx)
@@ -399,12 +440,55 @@ func (s *server) collectionFind(ctx *gin.Context) {
 		limit = s.maxLimit
 	}
 
-	// Get filter from request body. An empty body means "no filter".
-	var filter bson.M
-	if err := bindJSONBody(ctx, &filter); err != nil {
+	// Get skip, defaulting to 0 (no skip) if not passed.
+	var skip int
+	if skipParam, skipPassed := ctx.GetQuery("skip"); skipPassed {
+		skip, err = strconv.Atoi(skipParam)
+		if err != nil {
+			writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Skip is not an int: %s", err.Error()))
+			return
+		}
+		if skip < 0 {
+			writeError(ctx, http.StatusBadRequest, "Skip must be a non-negative int")
+			return
+		}
+	}
+
+	// Get sort, defaulting to no sort if not passed.
+	var sort bson.D
+	if sortParam, sortPassed := ctx.GetQuery("sort"); sortPassed {
+		sort, err = parseSortParam(sortParam)
+		if err != nil {
+			writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Invalid sort parameter: %s", err.Error()))
+			return
+		}
+	}
+
+	// Get filter from request body. An empty body means "no filter". A
+	// top-level "projection" key (matched case-insensitively) is pulled out
+	// as the projection spec; the remaining keys form the filter.
+	var rawBody map[string]any
+	if err := bindJSONBody(ctx, &rawBody); err != nil {
 		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
 	}
+
+	var projection bson.M
+	for key, val := range rawBody {
+		if !strings.EqualFold(key, "projection") {
+			continue
+		}
+		m, ok := val.(map[string]any)
+		if !ok {
+			writeError(ctx, http.StatusBadRequest, "Projection field must be an object")
+			return
+		}
+		projection = bson.M(m)
+		delete(rawBody, key)
+		break
+	}
+
+	filter := bson.M(rawBody)
 	if filter == nil {
 		filter = bson.M{}
 	}
@@ -412,6 +496,13 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	opts := options.Find()
 	opts.SetLimit(int64(limit))
 	opts.SetAllowDiskUse(true)
+	opts.SetSkip(int64(skip))
+	if len(sort) > 0 {
+		opts.SetSort(sort)
+	}
+	if projection != nil {
+		opts.SetProjection(projection)
+	}
 
 	// Run find
 	cursor, err := s.mongoClient.Database(dbName).Collection(collName).Find(ctx.Request.Context(), filter, opts)

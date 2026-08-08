@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -737,6 +738,217 @@ func TestCollectionFind_MongoError(t *testing.T) {
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `{}`)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, errorBody(t, w), "Error running find")
+}
+
+func TestParseSortParam(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    bson.D
+		wantErr bool
+	}{
+		{name: "single field ascending", raw: `{"createdAt":1}`, want: bson.D{{Key: "createdAt", Value: 1}}},
+		{name: "single field descending", raw: `{"createdAt":-1}`, want: bson.D{{Key: "createdAt", Value: -1}}},
+		{name: "multi field preserves order", raw: `{"a":1,"b":-1}`, want: bson.D{{Key: "a", Value: 1}, {Key: "b", Value: -1}}},
+		{name: "empty object", raw: `{}`, want: nil},
+		{name: "not json", raw: `notjson`, wantErr: true},
+		{name: "not an object", raw: `[1,2]`, wantErr: true},
+		{name: "invalid direction", raw: `{"a":2}`, wantErr: true},
+		{name: "non numeric direction", raw: `{"a":"asc"}`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseSortParam(tt.raw)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCollectionFind_BadSkip(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find?skip=notanumber", `{}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), "Skip is not an int")
+}
+
+func TestCollectionFind_NegativeSkip(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find?skip=-1", `{}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Skip must be a non-negative int", errorBody(t, w))
+}
+
+func TestCollectionFind_BadSort(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find?sort=notjson", `{}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), "Invalid sort parameter")
+}
+
+func TestCollectionFind_ProjectionFieldNotObject(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `{"projection":"notanobject"}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Projection field must be an object", errorBody(t, w))
+}
+
+func TestCollectionFind_RespectsSort(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"n": 3},
+		bson.M{"n": 1},
+		bson.M{"n": 2},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	path := "/api/collections/widgets/find?sort=" + url.QueryEscape(`{"n":1}`)
+	w := doJSONRequest(s.router, http.MethodPost, path, `{}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 3)
+	assert.EqualValues(t, 1, results[0]["n"])
+	assert.EqualValues(t, 2, results[1]["n"])
+	assert.EqualValues(t, 3, results[2]["n"])
+}
+
+func TestCollectionFind_MultiFieldSortOrderPreserved(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"group": "b", "n": 1},
+		bson.M{"group": "a", "n": 2},
+		bson.M{"group": "a", "n": 1},
+		bson.M{"group": "b", "n": 2},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	// Sort by group ascending, then n descending within each group. This is
+	// only correct if the sort key order from the JSON object is preserved.
+	path := "/api/collections/widgets/find?sort=" + url.QueryEscape(`{"group":1,"n":-1}`)
+	w := doJSONRequest(s.router, http.MethodPost, path, `{}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 4)
+	assert.Equal(t, "a", results[0]["group"])
+	assert.EqualValues(t, 2, results[0]["n"])
+	assert.Equal(t, "a", results[1]["group"])
+	assert.EqualValues(t, 1, results[1]["n"])
+	assert.Equal(t, "b", results[2]["group"])
+	assert.EqualValues(t, 2, results[2]["n"])
+	assert.Equal(t, "b", results[3]["group"])
+	assert.EqualValues(t, 1, results[3]["n"])
+}
+
+func TestCollectionFind_RespectsSkip(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	docs := make([]any, 0, 5)
+	for i := range 5 {
+		docs = append(docs, bson.M{"n": i})
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	path := "/api/collections/widgets/find?skip=2&sort=" + url.QueryEscape(`{"n":1}`)
+	w := doJSONRequest(s.router, http.MethodPost, path, `{}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 3)
+	assert.EqualValues(t, 2, results[0]["n"])
+	assert.EqualValues(t, 3, results[1]["n"])
+	assert.EqualValues(t, 4, results[2]["n"])
+}
+
+func TestCollectionFind_RespectsProjection(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a", "qty": 5, "secret": "x"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	body := `{"name":"a","projection":{"name":1,"qty":1,"_id":0}}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", body)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 1)
+	assert.Equal(t, map[string]any{"name": "a", "qty": float64(5)}, results[0])
+}
+
+func TestCollectionFind_UppercaseProjectionKeyIsApplied(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a", "qty": 5, "secret": "x"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	body := `{"name":"a","Projection":{"name":1,"_id":0}}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", body)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 1)
+	assert.Equal(t, map[string]any{"name": "a"}, results[0])
 }
 
 // ---- collectionCount ----

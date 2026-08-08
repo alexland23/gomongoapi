@@ -5,6 +5,15 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- `find` now supports `sort` and `skip` url params, and a `projection` field in the
+  request body, mapping to `options.Find().SetSort`/`SetSkip`/`SetProjection`
+  respectively. `sort` is a JSON object url-encoded into the query string (e.g.
+  `?sort={"createdAt":-1}`); `projection` is a reserved top-level key in the request
+  body, matched case-insensitively, with the remaining body keys forming the filter as
+  before. (#33)
+
 ### Fixed
 
 - `find` and `count` no longer reject a request with an empty body; an empty body is

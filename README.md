@@ -140,6 +140,20 @@ server-wide default (`FindLimit`) and max (`FindMaxLimit`) if configured (see
 [`Options`](#options) below). For `aggregate`, the limit is applied as a `$limit` stage
 appended to the end of the caller's pipeline.
 
+`find` additionally accepts:
+
+- `skip` url param — a non-negative int, mapped to `options.Find().SetSkip`.
+- `sort` url param — a JSON object url-encoded into the query string, e.g.
+  `?sort={"createdAt":-1}`, mapped to `options.Find().SetSort`. A JSON sort spec doesn't fit
+  a plain scalar query param, so it travels as an encoded JSON string like this rather than
+  as nested query keys.
+- `projection` — not a url param, but a top-level key in the request body (matched
+  case-insensitively), mapped to `options.Find().SetProjection`. Everything else in the body
+  is the filter, e.g. `{"UserName": "Jon", "projection": {"UserName": 1}}` filters on
+  `UserName` and returns only that field. This makes `projection` a reserved top-level
+  filter key — a genuine field named `projection` can't be filtered on directly through this
+  route.
+
 ### Error responses
 
 Every `/api/...` route returns a JSON envelope on failure, `{"error": "<message>"}`,
