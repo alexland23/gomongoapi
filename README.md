@@ -108,6 +108,20 @@ server.SetAPIMiddleware(func(ctx *gin.Context) {
 `SetCustomMiddleware` is the equivalent hook for the `/custom` route group; apply the
 same kind of check there if you add custom routes.
 
+**Call these before `Start()`.** gin composes a route's handler chain when the route is
+registered, and `/api`/`/custom` routes are registered inside `Start()`. Calling
+`SetAPIMiddleware`/`SetCustomMiddleware` after `Start()` has begun (e.g. from another
+goroutine) won't protect the routes already registered — since this is typically an auth
+hook, a silent no-op there would fail open, so `gomongoapi` logs a warning instead. Set
+all middleware between `NewServer()` and `Start()`.
+
+### Request body size limit
+
+`gomongoapi` caps `/api` request bodies at `MaxBodyBytes` (default 1 MiB) via
+`http.MaxBytesReader`, so a large `find`/`count`/`aggregate` filter or pipeline can't be
+used to pressure server memory. A body over the limit gets a `413` response. Adjust it
+with `SetMaxBodyBytes`, or pass `0` to disable the limit.
+
 ### Network boundary
 
 Don't publish the server's port directly to the internet. Put it behind a reverse proxy
@@ -179,11 +193,13 @@ be customized with the setter methods below before being passed to `gomongoapi.N
 | `FindLimit` / `SetFindLimit(int)`               | `1000`               | Default number of records returned by `find` and `aggregate` when no `limit` url param is passed. |
 | `FindMaxLimit` / `SetFindMaxLimit(int)`         | `0` (no limit)       | Upper bound on the `limit` url param for `find` and `aggregate`. Requests above this are rejected. |
 | `HealthCheckTimeout` / `SetHealthCheckTimeout(time.Duration)` | `5s`  | Upper bound on the Mongo ping issued by `/api/health`.                                          |
+| `MaxBodyBytes` / `SetMaxBodyBytes(int64)`       | `1 MiB` (`1048576`) | Upper bound on `/api` request bodies (find/count/aggregate). Requests over this return `413`. `0` disables the limit. |
 
 ## Custom routes and middleware
 
 The `Server` interface exposes hooks for adding your own routes and middleware, and for
-getting at the underlying Mongo client:
+getting at the underlying Mongo client. `SetAPIMiddleware`/`SetCustomMiddleware` must be
+called before `Start()` — see [No built-in auth](#no-built-in-auth) for why:
 
 ```go
 // Add middleware to the /api route group (logging, auth, etc.)

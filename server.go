@@ -66,6 +66,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -94,6 +95,11 @@ const defaultReadHeaderTimeout = 5 * time.Second
 // hang.
 const defaultHealthCheckTimeout = 5 * time.Second
 
+// defaultMaxBodyBytes bounds the size of request bodies accepted by the /api
+// group, so a large find/count/aggregate body can't be used to pressure
+// server memory. 1 MiB comfortably fits any realistic filter or pipeline.
+const defaultMaxBodyBytes = 1 << 20
+
 // Server interface for mongo api server
 type Server interface {
 
@@ -104,11 +110,23 @@ type Server interface {
 	Start() error
 
 	// Add custom middleware in the /api router group.
-	// This allows custom additions like logging, auth, etc
+	// This allows custom additions like logging, auth, etc.
+	//
+	// Must be called before Start(): gin composes a route's handler chain at
+	// registration time, and routes are registered during Start(). Calling
+	// this after Start() has begun (e.g. from another goroutine) will not
+	// protect the already-registered routes; it logs a warning rather than
+	// silently doing nothing, since this is commonly used as an auth hook.
 	SetAPIMiddleware(middleware ...gin.HandlerFunc)
 
 	// Add custom middleware in the /custom router group.
-	// This allows custom additions like logging, auth, etc
+	// This allows custom additions like logging, auth, etc.
+	//
+	// Must be called before Start(): gin composes a route's handler chain at
+	// registration time, and routes are registered during Start(). Calling
+	// this after Start() has begun (e.g. from another goroutine) will not
+	// protect the already-registered routes; it logs a warning rather than
+	// silently doing nothing, since this is commonly used as an auth hook.
 	SetCustomMiddleware(middleware ...gin.HandlerFunc)
 
 	// Add custom GET request, path will be under the /custom route group
@@ -143,6 +161,11 @@ type server struct {
 	shutdownTimeout    time.Duration
 	readHeaderTimeout  time.Duration
 	healthCheckTimeout time.Duration
+
+	// Guards routesRegistered, which SetAPIMiddleware/SetCustomMiddleware
+	// check to warn about late registration (see createRoutes).
+	mu               sync.Mutex
+	routesRegistered bool
 }
 
 // NewServer creates a new server. Must pass in Mongo Client Options.
@@ -155,6 +178,11 @@ func NewServer(opts *Options) Server {
 	var apiRouter, customRouter *gin.RouterGroup
 	if router != nil {
 		apiRouter = router.Group("/api")
+		// Registered before any caller-added middleware (SetAPIMiddleware
+		// runs after NewServer returns) and before createRoutes() attaches
+		// routes in Start(), so it applies to every /api request regardless
+		// of what's added later.
+		apiRouter.Use(maxBodyBytesMiddleware(opts.MaxBodyBytes))
 		customRouter = router.Group(opts.CustomRouteName)
 	}
 
@@ -174,6 +202,19 @@ func NewServer(opts *Options) Server {
 		shutdownTimeout:    opts.ShutdownTimeout,
 		readHeaderTimeout:  opts.ReadHeaderTimeout,
 		healthCheckTimeout: opts.HealthCheckTimeout,
+	}
+}
+
+// maxBodyBytesMiddleware wraps the request body in an http.MaxBytesReader so
+// reads beyond maxBodyBytes fail with an *http.MaxBytesError, guarding
+// against large find/count/aggregate bodies pressuring server memory. A
+// maxBodyBytes of 0 disables the limit.
+func maxBodyBytesMiddleware(maxBodyBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if maxBodyBytes > 0 {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+		}
+		c.Next()
 	}
 }
 
@@ -256,6 +297,14 @@ func (s *server) Start() error {
 // Sets the routes based on the mongo connection db and collections
 func (s *server) createRoutes() {
 
+	// Mark routes as registered so any later SetAPIMiddleware/
+	// SetCustomMiddleware call can warn that it won't affect these routes:
+	// gin composes a route's handler chain at registration time, which
+	// happens here.
+	s.mu.Lock()
+	s.routesRegistered = true
+	s.mu.Unlock()
+
 	// Test connection, always return ok
 	s.router.GET("/", func(ctx *gin.Context) {
 		ctx.Status(http.StatusOK)
@@ -271,15 +320,34 @@ func (s *server) createRoutes() {
 }
 
 // Add custom middleware in the /api router group.
-// This allows custom additions like logging, auth, etc
+// This allows custom additions like logging, auth, etc. Must be called
+// before Start(); see the Server interface doc for why.
 func (s *server) SetAPIMiddleware(middleware ...gin.HandlerFunc) {
+	s.warnIfRoutesRegistered("SetAPIMiddleware")
 	s.apiRouter.Use(middleware...)
 }
 
 // Add custom middleware in the /custom router group.
-// This allows custom additions like logging, auth, etc
+// This allows custom additions like logging, auth, etc. Must be called
+// before Start(); see the Server interface doc for why.
 func (s *server) SetCustomMiddleware(middleware ...gin.HandlerFunc) {
+	s.warnIfRoutesRegistered("SetCustomMiddleware")
 	s.customRouter.Use(middleware...)
+}
+
+// warnIfRoutesRegistered logs loudly if routes have already been registered
+// (i.e. Start() has called createRoutes()), since gin composes a route's
+// handler chain at registration time: middleware added after that point has
+// no effect on the routes already registered, which would otherwise be a
+// silent no-op for what's commonly an auth hook.
+func (s *server) warnIfRoutesRegistered(method string) {
+	s.mu.Lock()
+	registered := s.routesRegistered
+	s.mu.Unlock()
+
+	if registered {
+		log.Printf("gomongoapi: %s called after Start(); it will not apply to already-registered routes", method)
+	}
 }
 
 // Route to check readiness: pings MongoDB and returns 503 if it's
@@ -344,6 +412,18 @@ func bindJSONBody(ctx *gin.Context, v any) error {
 		return err
 	}
 	return nil
+}
+
+// writeBindError writes the error response for a bindJSONBody failure: 413
+// if the body exceeded the server's MaxBodyBytes limit (enforced by
+// maxBodyBytesMiddleware), 400 for any other malformed-body error.
+func writeBindError(ctx *gin.Context, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeError(ctx, http.StatusRequestEntityTooLarge, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		return
+	}
+	writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 }
 
 // parseSortParam parses the "sort" url query param (a JSON object, e.g.
@@ -497,7 +577,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	// as the projection spec; the remaining keys form the filter.
 	var rawBody map[string]any
 	if err := bindJSONBody(ctx, &rawBody); err != nil {
-		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		writeBindError(ctx, err)
 		return
 	}
 
@@ -572,7 +652,7 @@ func (s *server) collectionCount(ctx *gin.Context) {
 	// Get filter from request body. An empty body means "no filter".
 	var filter bson.M
 	if err := bindJSONBody(ctx, &filter); err != nil {
-		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		writeBindError(ctx, err)
 		return
 	}
 	if filter == nil {
@@ -639,7 +719,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	// valid JSON body without a Content-Type: application/json header).
 	var reqBody map[string]any
 	if err := bindJSONBody(ctx, &reqBody); err != nil {
-		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		writeBindError(ctx, err)
 		return
 	}
 
