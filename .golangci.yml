@@ -8,3 +8,12 @@ linters:
     - unused
     - revive
     - errcheck
+    - gosec
+    - ineffassign
+    - misspell
+    - unconvert
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

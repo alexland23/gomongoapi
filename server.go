@@ -6,6 +6,7 @@ MongoDB dashboards within Grafana.
 Package is using gin for the server and can be heavily customized as a custom gin engine can be set in the options.
 
 Available default routes:
+
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
 	| Path                             | HTTP Verb | Body  | Result                                                                                               |
 	+----------------------------------+-----------+-------+------------------------------------------------------------------------------------------------------+
@@ -23,6 +24,7 @@ the db. Once the options are made, they can be passed to create a new server. Se
 and block until it encounters an error.
 
 Example
+
 	// Set server options
 	serverOpts := gomongoapi.ServerOptions()
 	serverOpts.SetMongoClientOpts(options.Client().ApplyURI("mongodb://localhost:27017"))
@@ -48,7 +50,6 @@ Example
 
 	// Start server
 	server.Start()
-
 */
 package gomongoapi
 
@@ -260,6 +261,7 @@ func (s *server) getCollections(c *gin.Context) {
 // Runs a find on the collection. /collections/:name/find
 // Valid URL parameter are 'database' and 'limit'
 // Request body should have the find filter
+//
 //	ex) Request Body: {"UserName": "Jon"}
 func (s *server) collectionFind(ctx *gin.Context) {
 
@@ -340,6 +342,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 // Runs a count on the collection. /collections/:name/count
 // Valid URL parameter is 'database'
 // Request body should have the count filter
+//
 //	ex) Request Body: {"UserName": "Jon"}
 func (s *server) collectionCount(ctx *gin.Context) {
 
@@ -385,6 +388,7 @@ func (s *server) collectionCount(ctx *gin.Context) {
 // /collections/:name/aggregate
 // Valid URL parameter are 'database' and 'limit'
 // Request body should contain the aggregate command, the "aggregate" key is matched case-insensitively
+//
 //	ex) Request Body: {"Aggregate": [{"$match": { "UserName": "Jon" }}]
 func (s *server) collectionAggregate(ctx *gin.Context) {
 
