@@ -48,6 +48,21 @@ func main() {
 }
 ```
 
+## Examples
+
+[`examples/simpleDemo`](examples/simpleDemo) is a runnable, `docker-compose`-based demo:
+it starts MongoDB, seeds it with sample data, runs a `gomongoapi` server (including a
+custom route), and provisions a Grafana instance with the JSON API and Infinity
+datasources already pointed at it — so you can go straight to building dashboards
+against Mongo data.
+
+```sh
+cd examples/simpleDemo
+docker-compose up
+```
+
+Then open Grafana at http://localhost:3000 (default login `admin` / `admin`).
+
 ## Default routes
 
 | Path                                | HTTP Verb | Body  | Result                                                                                                |
