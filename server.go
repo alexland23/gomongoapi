@@ -14,6 +14,7 @@ Available default routes:
 	| /api/databases                   |    GET    | Empty | Returns list of available databases, unless a default is set.                                        |
 	| /api/collections                 |    GET    | Empty | Returns a list collections to the default db or the one passed in url param.                         |
 	| /api/collections/:name/find      |    POST   | JSON  | Returns result of find on the collection name. DB is either default or one passed in url param.      |
+	| /api/collections/:name/count     |    POST   | JSON  | Returns count of documents in the collection name. DB is either default or one passed in url param.  |
 	| /api/collections/:name/aggregate |    POST   | JSON  | Returns result of aggregate on the collection name. DB is either default or one passed in url param. |
 	| /custom/<Custom Route>           |    GET    | N/A   | Users can create custom GET route, they control everything.                                          |
 	| /custom/<Custom Route>           |    POST   | N/A   | Users can create custom POST route, they control everything.                                         |
