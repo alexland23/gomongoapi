@@ -651,6 +651,10 @@ func TestCollectionAggregate_NonArrayAggregateField(t *testing.T) {
 }
 
 func TestCollectionAggregate_MissingAggregateFieldUsesEmptyPipeline(t *testing.T) {
+	// Deliberate behavior: a body with no recognizable pipeline field (under any
+	// casing of "aggregate") stays a 200 with an empty pipeline rather than a 400,
+	// so callers can intentionally fetch an entire small collection without
+	// constructing a no-op pipeline.
 	client := requireMongo(t)
 	dbName := testDBName(t)
 	ctx := context.Background()
@@ -669,6 +673,43 @@ func TestCollectionAggregate_MissingAggregateFieldUsesEmptyPipeline(t *testing.T
 	var results []map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
 	assert.Len(t, results, 1)
+}
+
+func TestCollectionAggregate_LowercaseAggregateKeyIsApplied(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertMany(ctx, []any{
+		bson.M{"name": "a", "qty": 1},
+		bson.M{"name": "a", "qty": 3},
+		bson.M{"name": "b", "qty": 5},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.createRoutes()
+
+	body := `{"aggregate":[{"$match":{"name":"a"}},{"$group":{"_id":"$name","total":{"$sum":"$qty"}}}]}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", body)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	require.Len(t, results, 1)
+	assert.EqualValues(t, 4, results[0]["total"])
+}
+
+func TestCollectionAggregate_NonArrayLowercaseAggregateField(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"aggregate":"not-an-array"}`)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "Aggregate field must be an array")
 }
 
 func TestCollectionAggregate_Success(t *testing.T) {

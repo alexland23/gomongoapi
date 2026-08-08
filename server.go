@@ -58,6 +58,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
@@ -374,7 +375,7 @@ func (s *server) collectionCount(ctx *gin.Context) {
 
 // Runs an aggregate on the collection
 // /collections/:name/aggregate
-// Request body should contain the aggregate command
+// Request body should contain the aggregate command, the "aggregate" key is matched case-insensitively
 //	ex) Request Body: {"Aggregate": [{"$match": { "UserName": "Jon" }}]
 func (s *server) collectionAggregate(ctx *gin.Context) {
 
@@ -406,14 +407,21 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		return
 	}
 
-	// Get pipeline, if it doesn't exists an empty pipeline will be used
+	// Get pipeline, matching the "aggregate" key case-insensitively so callers
+	// sending lowercase JSON (the common case) aren't silently ignored. If no
+	// recognizable key is present, an empty pipeline will be used.
 	var pipeLine []any
-	if rawPipeline, ok := reqBody["Aggregate"]; ok {
+	for key, rawPipeline := range reqBody {
+		if !strings.EqualFold(key, "Aggregate") {
+			continue
+		}
+		var ok bool
 		pipeLine, ok = rawPipeline.([]any)
 		if !ok {
 			ctx.String(http.StatusBadRequest, "Aggregate field must be an array")
 			return
 		}
+		break
 	}
 
 	opts := options.Aggregate()
