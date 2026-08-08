@@ -498,6 +498,33 @@ func TestCollectionFind_LimitExceedsMax(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestCollectionFind_DefaultLimitExceedsMax_Clamped(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	docs := make([]any, 0, 5)
+	for i := range 5 {
+		docs = append(docs, bson.M{"n": i})
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	// findLimit (1000) exceeds maxLimit (2); a request with no explicit "limit"
+	// must succeed and be capped at maxLimit rather than 400ing.
+	s := newTestServer(client, dbName, 1000, 2)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `{}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	assert.Len(t, results, 2)
+}
+
 func TestCollectionFind_BadRequestBody(t *testing.T) {
 	s := newTestServer(nil, "app", 100, 0)
 	s.createRoutes()
@@ -743,6 +770,33 @@ func TestCollectionAggregate_LimitExceedsMax(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate?limit=50", `{"Aggregate":[]}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCollectionAggregate_DefaultLimitExceedsMax_Clamped(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	docs := make([]any, 0, 5)
+	for i := range 5 {
+		docs = append(docs, bson.M{"n": i})
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	// findLimit (1000) exceeds maxLimit (2); a request with no explicit "limit"
+	// must succeed and be capped at maxLimit rather than 400ing.
+	s := newTestServer(client, dbName, 1000, 2)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"Aggregate":[]}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var results []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &results))
+	assert.Len(t, results, 2)
 }
 
 func TestCollectionAggregate_RespectsDefaultLimit(t *testing.T) {
