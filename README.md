@@ -189,6 +189,7 @@ server.SetAPIMiddleware(func(ctx *gin.Context) {
 | `/api/collections/:name/aggregate`    | POST      | JSON  | Returns the result of an aggregate on collection `:name`. DB is either the default or `database` url param. |
 | `/custom/<custom route>`              | GET       | N/A   | User-defined GET route — user controls everything.                                                     |
 | `/custom/<custom route>`              | POST      | N/A   | User-defined POST route — user controls everything.                                                    |
+| `/custom/<custom route>`              | any       | N/A   | User-defined route for any HTTP method via `AddCustomRoute` — user controls everything.                 |
 
 `find` and `aggregate` both accept an optional `limit` url param, and both respect a
 server-wide default (`FindLimit`) and max (`FindMaxLimit`) if configured (see
@@ -264,6 +265,10 @@ server.AddCustomGET("/appUsersCount", func(ctx *gin.Context) {
 
 // Add a custom POST route under /custom
 server.AddCustomPOST("/myRoute", myHandler)
+
+// AddCustomGET/AddCustomPOST are thin wrappers around AddCustomRoute; use it directly
+// for other HTTP methods (PUT, DELETE, PATCH, ...)
+server.AddCustomRoute(http.MethodPut, "/myRoute/:id", myHandler)
 ```
 
 ## License
