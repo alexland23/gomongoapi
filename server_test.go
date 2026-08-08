@@ -210,6 +210,7 @@ func TestNewServer(t *testing.T) {
 	opts.SetShutdownTimeout(15 * time.Second)
 	opts.SetReadHeaderTimeout(3 * time.Second)
 	opts.SetHealthCheckTimeout(2 * time.Second)
+	opts.SetAllowUnsafeOperators(true)
 	require.NoError(t, opts.SetCustomRouteName("myroutes"))
 
 	srv := NewServer(opts)
@@ -228,6 +229,7 @@ func TestNewServer(t *testing.T) {
 	assert.Equal(t, 15*time.Second, s.shutdownTimeout)
 	assert.Equal(t, 3*time.Second, s.readHeaderTimeout)
 	assert.Equal(t, 2*time.Second, s.healthCheckTimeout)
+	assert.True(t, s.allowUnsafeOperators)
 	require.NotNil(t, s.apiRouter)
 	require.NotNil(t, s.customRouter)
 	assert.Equal(t, "/api", s.apiRouter.BasePath())
@@ -312,6 +314,46 @@ func TestSetAPIMiddleware(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "hit", w.Header().Get("X-Test-Middleware"))
+}
+
+func TestSetAPIKey_MissingOrWrongKeyRejected(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.SetAPIKey("correct-key")
+	s.createRoutes()
+
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{name: "no header", header: ""},
+		{name: "wrong key", header: "wrong-key"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/databases", nil)
+			if tt.header != "" {
+				req.Header.Set("X-API-Key", tt.header)
+			}
+			s.router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	}
+}
+
+func TestSetAPIKey_CorrectKeyAccepted(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.SetAPIKey("correct-key")
+	s.createRoutes()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/databases", nil)
+	req.Header.Set("X-API-Key", "correct-key")
+	s.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestSetCustomMiddleware(t *testing.T) {
@@ -849,6 +891,215 @@ func TestParseSortParam(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// ---- findBannedOperator ----
+
+func TestFindBannedOperator(t *testing.T) {
+	tests := []struct {
+		name    string
+		v       any
+		wantOp  string
+		wantHit bool
+	}{
+		{name: "empty filter", v: map[string]any{}, wantHit: false},
+		{name: "safe filter", v: map[string]any{"name": "a", "$or": []any{map[string]any{"qty": 1}}}, wantHit: false},
+		{name: "top-level $where", v: map[string]any{"$where": "this.a == this.b"}, wantOp: "$where", wantHit: true},
+		{name: "nested $function inside $expr", v: map[string]any{"$expr": map[string]any{"$function": "..."}}, wantOp: "$function", wantHit: true},
+		{name: "$out nested in array stage", v: []any{map[string]any{"$match": map[string]any{}}, map[string]any{"$out": "otherColl"}}, wantOp: "$out", wantHit: true},
+		{name: "$merge stage", v: []any{map[string]any{"$merge": map[string]any{"into": "otherColl"}}}, wantOp: "$merge", wantHit: true},
+		{name: "banned op buried in $and", v: map[string]any{"$and": []any{map[string]any{"a": 1}, map[string]any{"$where": "1"}}}, wantOp: "$where", wantHit: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			op, found := findBannedOperator(tt.v)
+			assert.Equal(t, tt.wantHit, found)
+			if tt.wantHit {
+				assert.Equal(t, tt.wantOp, op)
+			}
+		})
+	}
+}
+
+// ---- hasWriteAction ----
+
+func TestHasWriteAction(t *testing.T) {
+	tests := []struct {
+		name       string
+		privileges []connectionStatusPrivilege
+		wantAction string
+		wantFound  bool
+	}{
+		{name: "no privileges", privileges: nil, wantFound: false},
+		{name: "read-only actions", privileges: []connectionStatusPrivilege{{Actions: []string{"find", "listCollections"}}}, wantFound: false},
+		{name: "insert action", privileges: []connectionStatusPrivilege{{Actions: []string{"find", "insert"}}}, wantAction: "insert", wantFound: true},
+		{name: "update action in second privilege", privileges: []connectionStatusPrivilege{{Actions: []string{"find"}}, {Actions: []string{"update"}}}, wantAction: "update", wantFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action, found := hasWriteAction(tt.privileges)
+			assert.Equal(t, tt.wantFound, found)
+			if tt.wantFound {
+				assert.Equal(t, tt.wantAction, action)
+			}
+		})
+	}
+}
+
+// ---- warnIfWritableCredentials ----
+
+func TestWarnIfWritableCredentials_NoAuthDoesNotWarn(t *testing.T) {
+	// The shared test container runs without auth configured, so
+	// connectionStatus reports no authenticated user and therefore no
+	// privileges to flag; the call must not panic or log a warning.
+	client := requireMongo(t)
+	buf := captureLog(t)
+
+	s := newTestServer(client, "", 100, 0)
+	s.warnIfWritableCredentials(context.Background())
+
+	assert.Empty(t, buf.String())
+}
+
+func TestWarnIfWritableCredentials_WritableUserWarns(t *testing.T) {
+	ctx := context.Background()
+
+	container, err := mongodb.Run(ctx, "mongo:6", mongodb.WithUsername("root"), mongodb.WithPassword("password"))
+	if err != nil {
+		t.Skipf("mongodb test container unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = container.Terminate(ctx) })
+
+	uri, err := container.ConnectionString(ctx)
+	require.NoError(t, err)
+
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Disconnect(ctx) })
+	require.NoError(t, client.Ping(ctx, nil))
+
+	buf := captureLog(t)
+
+	s := newTestServer(client, "", 100, 0)
+	s.warnIfWritableCredentials(ctx)
+
+	assert.Contains(t, buf.String(), "write privileges")
+}
+
+// ---- AllowUnsafeOperators ----
+
+func TestCollectionFind_RejectsUnsafeOperator(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `{"$where":"this.a == this.b"}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), `disallowed operator "$where"`)
+}
+
+func TestCollectionFind_AllowUnsafeOperatorsPermitsThem(t *testing.T) {
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertOne(ctx, bson.M{"a": 1, "b": 1})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.allowUnsafeOperators = true
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `{"$where":"this.a == this.b"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestCollectionCount_RejectsUnsafeOperator(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/count", `{"$where":"this.a == this.b"}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), `disallowed operator "$where"`)
+}
+
+func TestCollectionAggregate_RejectsOutStage(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"Aggregate":[{"$out":"otherColl"}]}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), `disallowed stage/operator "$out"`)
+}
+
+func TestCollectionAggregate_RejectsMergeStage(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	body := `{"Aggregate":[{"$merge":{"into":"otherColl"}}]}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", body)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), `disallowed stage/operator "$merge"`)
+}
+
+func TestCollectionAggregate_RejectsNestedWhereOperator(t *testing.T) {
+	s := newTestServer(nil, "app", 100, 0)
+	s.createRoutes()
+
+	body := `{"Aggregate":[{"$match":{"$where":"this.a == this.b"}}]}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", body)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), `disallowed stage/operator "$where"`)
+}
+
+func TestCollectionAggregate_AllowUnsafeOperatorsPermitsOutStage(t *testing.T) {
+	// Also a regression test for endsInOutOrMerge: appending the server's
+	// trailing $limit stage after a caller's $out would be an invalid
+	// pipeline, since Mongo requires $out to be the terminal stage.
+	client := requireMongo(t)
+	dbName := testDBName(t)
+	ctx := context.Background()
+
+	coll := client.Database(dbName).Collection("widgets")
+	_, err := coll.InsertOne(ctx, bson.M{"name": "a"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Database(dbName).Drop(context.Background()) })
+
+	s := newTestServer(client, dbName, 100, 0)
+	s.allowUnsafeOperators = true
+	s.createRoutes()
+
+	body := `{"Aggregate":[{"$out":"widgetsCopy"}]}`
+	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", body)
+	require.Equal(t, http.StatusOK, w.Code)
+	t.Cleanup(func() { _ = client.Database(dbName).Collection("widgetsCopy").Drop(context.Background()) })
+
+	count, err := client.Database(dbName).Collection("widgetsCopy").CountDocuments(ctx, bson.M{})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, count)
+}
+
+func TestEndsInOutOrMerge(t *testing.T) {
+	tests := []struct {
+		name     string
+		pipeline []any
+		want     bool
+	}{
+		{name: "empty pipeline", pipeline: []any{}, want: false},
+		{name: "match only", pipeline: []any{map[string]any{"$match": map[string]any{}}}, want: false},
+		{name: "ends in $out", pipeline: []any{map[string]any{"$match": map[string]any{}}, map[string]any{"$out": "coll"}}, want: true},
+		{name: "ends in $merge", pipeline: []any{map[string]any{"$merge": map[string]any{"into": "coll"}}}, want: true},
+		{name: "$out not last stage", pipeline: []any{map[string]any{"$out": "coll"}, map[string]any{"$match": map[string]any{}}}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, endsInOutOrMerge(tt.pipeline))
 		})
 	}
 }

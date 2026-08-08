@@ -39,7 +39,7 @@ func main() {
 	serverOpts := gomongoapi.ServerOptions()
 	serverOpts.SetMongoClientOpts(options.Client().ApplyURI("mongodb://localhost:27017"))
 	serverOpts.SetDefaultDB("app")
-	serverOpts.SetAddress(":8080")
+	serverOpts.SetAddress(":8080") // listen on all interfaces; default is localhost-only, see Security
 
 	// Create server
 	server := gomongoapi.NewServer(serverOpts)
@@ -71,27 +71,59 @@ Then open Grafana at http://localhost:3000 (default login `admin` / `admin`).
 
 ## Security
 
-`gomongoapi` gives a caller direct, unauthenticated access to whatever Mongo credentials
-you configure it with. It has no built-in auth, and the API is **not read-only**:
-`aggregate` passes the caller-supplied pipeline straight to the driver with no stage
-filtering, so a pipeline containing `$out` or `$merge` can write to or overwrite
-collections, and `find`/`count` filters are passed through as-is, so operators like
-`$where` or `$function` can execute server-side JavaScript depending on your MongoDB
-version and configuration. Treat this as a query surface with write potential, not a
-read-only reporting endpoint, and take the following seriously before exposing it
-anywhere besides `localhost`.
+`gomongoapi` gives a caller query — and, if misconfigured, write — access to whatever
+Mongo credentials you configure it with. Several of the sharpest edges are restricted by
+default (below), but none of that is a substitute for scoping the credentials themselves.
+Treat this as a query surface with write potential, not an inherently read-only reporting
+endpoint.
 
-### Use a read-only Mongo user
+### Enforced by the library
+
+- **`$where`/`$function`/`$out`/`$merge` are rejected by default.** Every `find`/`count`
+  filter and `aggregate` pipeline is scanned recursively — including inside `$and`/`$or`/
+  `$expr` and nested pipeline stages — for these four operators, and rejected with `400` if
+  found. `$where`/`$function` can execute server-side JavaScript depending on your MongoDB
+  version and configuration; `$out`/`$merge` can write to or overwrite a collection through
+  what looks like a query API. Set `Options.AllowUnsafeOperators` (`SetAllowUnsafeOperators(true)`)
+  to disable this if you trust your callers and have a legitimate need for one of these.
+- **Not reachable off the host by default.** `Address` defaults to `localhost:8080`.
+  Binding to a non-loopback address (`:8080`, `0.0.0.0:8080`, etc. — needed for Docker port
+  publishing, see [`examples/simpleDemo`](examples/simpleDemo)) is an explicit opt-in via
+  `SetAddress`.
+- **Best-effort read-only credential warning.** On `Start()`, `gomongoapi` runs Mongo's
+  `connectionStatus` command and logs a warning if the connected user holds any write
+  privilege. This is advisory only: it never blocks startup, and a failure to run the check
+  (no auth configured, a custom role that disallows `connectionStatus`, etc.) is silently
+  ignored. **It is not a substitute for actually using a read-only user** — see below —
+  only a nudge in case you forgot.
+- **Request body size limit.** `/api` request bodies are capped at `MaxBodyBytes` (default
+  1 MiB) via `http.MaxBytesReader`, so a large `find`/`count`/`aggregate` filter or
+  pipeline can't be used to pressure server memory. A body over the limit gets a `413`
+  response. Adjust it with `SetMaxBodyBytes`, or pass `0` to disable the limit.
+
+### Still the consumer's responsibility
+
+#### Use a read-only Mongo user
 
 Point `MongoClientOpts` at a connection string scoped to a Mongo user with `read` (not
-`readWrite`) on only the databases you intend to expose. This is the control that
-actually stops `$out`/`$merge`/`$where` from doing damage — everything else here is
-defense in depth on top of it.
+`readWrite`) on only the databases you intend to expose. This is the control that actually
+stops write access from doing damage — the operator restrictions and the startup warning
+above are defense in depth on top of it, not a replacement for it: they only catch known
+dangerous operators and known write actions, not every way write-capable credentials could
+be misused.
 
-### No built-in auth
+#### No built-in auth beyond an optional shared API key
 
-`gomongoapi` does not authenticate requests itself. Use `SetAPIMiddleware` to add your
-own check in front of every `/api` route, for example a shared API key:
+`gomongoapi` does not authenticate requests on its own beyond one convenience helper.
+`SetAPIKey` installs a check requiring a matching `X-API-Key` header on every `/api`
+request:
+
+```go
+server.SetAPIKey("replace-with-a-securely-generated-key") // load from env/secrets, don't hardcode
+```
+
+For anything beyond a single shared secret (per-caller keys, JWT, OAuth), use
+`SetAPIMiddleware` to add your own check in front of every `/api` route instead:
 
 ```go
 const apiKey = "replace-with-a-securely-generated-key" // load from env/secrets, don't hardcode
@@ -110,31 +142,38 @@ same kind of check there if you add custom routes.
 
 **Call these before `Start()`.** gin composes a route's handler chain when the route is
 registered, and `/api`/`/custom` routes are registered inside `Start()`. Calling
-`SetAPIMiddleware`/`SetCustomMiddleware` after `Start()` has begun (e.g. from another
-goroutine) won't protect the routes already registered — since this is typically an auth
-hook, a silent no-op there would fail open, so `gomongoapi` logs a warning instead. Set
-all middleware between `NewServer()` and `Start()`.
+`SetAPIKey`/`SetAPIMiddleware`/`SetCustomMiddleware` after `Start()` has begun (e.g. from
+another goroutine) won't protect the routes already registered — since this is typically
+an auth hook, a silent no-op there would fail open, so `gomongoapi` logs a warning
+instead. Set all middleware between `NewServer()` and `Start()`.
 
-### Request body size limit
+#### Network boundary beyond localhost
 
-`gomongoapi` caps `/api` request bodies at `MaxBodyBytes` (default 1 MiB) via
-`http.MaxBytesReader`, so a large `find`/`count`/`aggregate` filter or pipeline can't be
-used to pressure server memory. A body over the limit gets a `413` response. Adjust it
-with `SetMaxBodyBytes`, or pass `0` to disable the limit.
+The `localhost`-only default keeps the server off the network entirely, but once you opt
+into a non-loopback `Address` (e.g. for Docker), don't publish the port directly to the
+internet. Put it behind a reverse proxy (for TLS termination and a single controlled entry
+point) or keep it on a private network reachable only by the Grafana instance querying it
+— ideally both.
 
-### Network boundary
-
-Don't publish the server's port directly to the internet. Put it behind a reverse proxy
-(for TLS termination and a single controlled entry point) or keep it on a private
-network reachable only by the Grafana instance querying it — ideally both.
-
-### Rate limiting
+#### Rate limiting
 
 `gomongoapi` doesn't ship any rate limiting. If the server is reachable by more than a
-trusted internal caller, add a rate-limiting gin middleware (e.g.
-[`ulule/limiter`](https://github.com/ulule/limiter) or
-[`gin-contrib/timeout`](https://github.com/gin-contrib/timeout)-style approaches) via
-`SetAPIMiddleware`.
+trusted internal caller, add a rate-limiting gin middleware via `SetAPIMiddleware`, for
+example using [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate)
+directly (no extra dependency beyond the extended standard library) or a package like
+[`ulule/limiter`](https://github.com/ulule/limiter):
+
+```go
+limiter := rate.NewLimiter(rate.Limit(10), 20) // 10 requests/sec, burst of 20
+
+server.SetAPIMiddleware(func(ctx *gin.Context) {
+	if !limiter.Allow() {
+		ctx.AbortWithStatus(http.StatusTooManyRequests)
+		return
+	}
+	ctx.Next()
+})
+```
 
 ## Default routes
 
@@ -186,7 +225,7 @@ be customized with the setter methods below before being passed to `gomongoapi.N
 | Field / Setter                                 | Default            | Description                                                                                   |
 | ----------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------- |
 | `Router` / `SetRouter(*gin.Engine)`             | `gin.Default()`     | The gin engine the server will use. Pass your own to fully customize the server.               |
-| `Address` / `SetAddress(string)`                | `:8080`              | Address the server listens on.                                                                  |
+| `Address` / `SetAddress(string)`                | `localhost:8080`     | Address the server listens on. See [Security](#security) for why this defaults to loopback-only. |
 | `CustomRouteName` / `SetCustomRouteName(string)`| `custom`             | Route group name used for custom routes. Cannot be `/` or `/api`.                               |
 | `MongoClientOpts` / `SetMongoClientOpts(*options.ClientOptions)` | empty options | MongoDB client options, e.g. connection URI. Required for a real connection.        |
 | `DefaultDB` / `SetDefaultDB(string)`            | none (unset)         | If set, all routes operate against this database and the `database` url param is not needed.    |
@@ -194,6 +233,7 @@ be customized with the setter methods below before being passed to `gomongoapi.N
 | `FindMaxLimit` / `SetFindMaxLimit(int)`         | `0` (no limit)       | Upper bound on the `limit` url param for `find` and `aggregate`. Requests above this are rejected. |
 | `HealthCheckTimeout` / `SetHealthCheckTimeout(time.Duration)` | `5s`  | Upper bound on the Mongo ping issued by `/api/health`.                                          |
 | `MaxBodyBytes` / `SetMaxBodyBytes(int64)`       | `1 MiB` (`1048576`) | Upper bound on `/api` request bodies (find/count/aggregate). Requests over this return `413`. `0` disables the limit. |
+| `AllowUnsafeOperators` / `SetAllowUnsafeOperators(bool)` | `false` | If `false`, `find`/`count` filters and `aggregate` pipelines containing `$where`, `$function`, `$out`, or `$merge` are rejected with `400`. See [Security](#security). |
 
 ## Custom routes and middleware
 
