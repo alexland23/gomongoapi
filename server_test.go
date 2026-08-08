@@ -166,6 +166,22 @@ func doJSONRequest(router http.Handler, method, path, body string) *httptest.Res
 	return w
 }
 
+// errorBody decodes a handler failure response as the {"error": "..."} JSON
+// envelope and returns the message, failing the test if the body isn't in
+// that shape.
+func errorBody(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+
+	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+
+	var body struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.NotEmpty(t, body.Error)
+	return body.Error
+}
+
 // ---- NewServer ----
 
 func TestNewServer(t *testing.T) {
@@ -482,6 +498,7 @@ func TestGetDatabases_MongoError(t *testing.T) {
 	s.router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error getting databases names")
 }
 
 // ---- getCollections ----
@@ -495,6 +512,7 @@ func TestGetCollections_MissingDatabaseParam(t *testing.T) {
 	s.router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Database name was not passed, one is needed", errorBody(t, w))
 }
 
 func TestGetCollections_UsesDefaultDB(t *testing.T) {
@@ -554,6 +572,7 @@ func TestGetCollections_MongoError(t *testing.T) {
 	s.router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error getting collection names")
 }
 
 // ---- collectionFind ----
@@ -564,6 +583,7 @@ func TestCollectionFind_MissingDatabaseParam(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `{}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Database name was not passed, one is needed", errorBody(t, w))
 }
 
 func TestCollectionFind_MissingCollectionName(t *testing.T) {
@@ -578,7 +598,7 @@ func TestCollectionFind_MissingCollectionName(t *testing.T) {
 	s.collectionFind(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Collection name was not passed")
+	assert.Equal(t, "Collection name was not passed", errorBody(t, w))
 }
 
 func TestCollectionFind_BadLimit(t *testing.T) {
@@ -587,6 +607,7 @@ func TestCollectionFind_BadLimit(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find?limit=notanumber", `{}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), "Limit is not an int")
 }
 
 func TestCollectionFind_LimitExceedsMax(t *testing.T) {
@@ -595,6 +616,7 @@ func TestCollectionFind_LimitExceedsMax(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find?limit=50", `{}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Passed limit is greater than max limit set by server", errorBody(t, w))
 }
 
 func TestCollectionFind_DefaultLimitExceedsMax_Clamped(t *testing.T) {
@@ -630,6 +652,7 @@ func TestCollectionFind_BadRequestBody(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `not json`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error reading body request")
 }
 
 func TestCollectionFind_Success(t *testing.T) {
@@ -690,6 +713,7 @@ func TestCollectionFind_MongoError(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/find", `{}`)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error running find")
 }
 
 // ---- collectionCount ----
@@ -700,6 +724,7 @@ func TestCollectionCount_MissingDatabaseParam(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/count", `{}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Database name was not passed, one is needed", errorBody(t, w))
 }
 
 func TestCollectionCount_MissingCollectionName(t *testing.T) {
@@ -714,7 +739,7 @@ func TestCollectionCount_MissingCollectionName(t *testing.T) {
 	s.collectionCount(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Collection name was not passed")
+	assert.Equal(t, "Collection name was not passed", errorBody(t, w))
 }
 
 func TestCollectionCount_BadRequestBody(t *testing.T) {
@@ -723,6 +748,7 @@ func TestCollectionCount_BadRequestBody(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/count", `not json`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error reading body request")
 }
 
 func TestCollectionCount_Success(t *testing.T) {
@@ -758,6 +784,7 @@ func TestCollectionCount_MongoError(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/count", `{}`)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error running find")
 }
 
 // ---- collectionAggregate ----
@@ -768,6 +795,7 @@ func TestCollectionAggregate_MissingDatabaseParam(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"Aggregate":[]}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Database name was not passed, one is needed", errorBody(t, w))
 }
 
 func TestCollectionAggregate_MissingCollectionName(t *testing.T) {
@@ -782,7 +810,7 @@ func TestCollectionAggregate_MissingCollectionName(t *testing.T) {
 	s.collectionAggregate(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Collection name was not passed")
+	assert.Equal(t, "Collection name was not passed", errorBody(t, w))
 }
 
 func TestCollectionAggregate_BadRequestBody(t *testing.T) {
@@ -791,6 +819,7 @@ func TestCollectionAggregate_BadRequestBody(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `not json`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error reading body request")
 }
 
 func TestCollectionAggregate_NonArrayAggregateField(t *testing.T) {
@@ -800,7 +829,7 @@ func TestCollectionAggregate_NonArrayAggregateField(t *testing.T) {
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"Aggregate":"not-an-array"}`)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Aggregate field must be an array")
+	assert.Equal(t, "Aggregate field must be an array", errorBody(t, w))
 }
 
 func TestCollectionAggregate_MissingAggregateFieldUsesEmptyPipeline(t *testing.T) {
@@ -861,6 +890,7 @@ func TestCollectionAggregate_BadLimit(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate?limit=notanumber", `{"Aggregate":[]}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, errorBody(t, w), "Limit is not an int")
 }
 
 func TestCollectionAggregate_LimitExceedsMax(t *testing.T) {
@@ -869,6 +899,7 @@ func TestCollectionAggregate_LimitExceedsMax(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate?limit=50", `{"Aggregate":[]}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "Passed limit is greater than max limit set by server", errorBody(t, w))
 }
 
 func TestCollectionAggregate_DefaultLimitExceedsMax_Clamped(t *testing.T) {
@@ -986,7 +1017,7 @@ func TestCollectionAggregate_NonArrayLowercaseAggregateField(t *testing.T) {
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"aggregate":"not-an-array"}`)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Aggregate field must be an array")
+	assert.Equal(t, "Aggregate field must be an array", errorBody(t, w))
 }
 
 func TestCollectionAggregate_Success(t *testing.T) {
@@ -1024,4 +1055,5 @@ func TestCollectionAggregate_MongoError(t *testing.T) {
 
 	w := doJSONRequest(s.router, http.MethodPost, "/api/collections/widgets/aggregate", `{"Aggregate":[]}`)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, errorBody(t, w), "Error running aggregate")
 }

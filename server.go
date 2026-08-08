@@ -42,7 +42,7 @@ Example
 
 		count, err := client.Database("app").Collection("users").CountDocuments(ctx.Request.Context(), bson.M{})
 		if err != nil {
-			ctx.String(http.StatusInternalServerError, "Error running count: "+err.Error())
+			ctx.JSON(http.StatusInternalServerError, bson.M{"error": "Error running count: " + err.Error()})
 			return
 		}
 
@@ -286,7 +286,7 @@ func (s *server) getDatabases(c *gin.Context) {
 
 	dbNames, err := s.mongoClient.ListDatabaseNames(c.Request.Context(), bson.M{})
 	if err != nil {
-		c.String(http.StatusInternalServerError, "Error getting databases names: %s", err.Error())
+		writeError(c, http.StatusInternalServerError, fmt.Sprintf("Error getting databases names: %s", err.Error()))
 		return
 	}
 
@@ -295,6 +295,13 @@ func (s *server) getDatabases(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, res)
+}
+
+// writeError writes a {"error": "<message>"} JSON envelope with the given
+// status code. All handler failure paths use this instead of ctx.String so
+// error responses are consistently JSON, matching the JSON success responses.
+func writeError(ctx *gin.Context, status int, message string) {
+	ctx.JSON(status, bson.M{"error": message})
 }
 
 // resolveDB determines the target database for a /api/collections/... route:
@@ -308,7 +315,7 @@ func (s *server) resolveDB(ctx *gin.Context) (dbName string, ok bool) {
 
 	dbName, ok = ctx.GetQuery("database")
 	if !ok {
-		ctx.String(http.StatusBadRequest, "Database name was not passed, one is needed")
+		writeError(ctx, http.StatusBadRequest, "Database name was not passed, one is needed")
 		return "", false
 	}
 	return dbName, true
@@ -325,7 +332,7 @@ func (s *server) getCollections(c *gin.Context) {
 
 	collNames, err := s.mongoClient.Database(dbName).ListCollectionNames(c.Request.Context(), bson.M{})
 	if err != nil {
-		c.String(http.StatusInternalServerError, "Error getting collection names: %s", err.Error())
+		writeError(c, http.StatusInternalServerError, fmt.Sprintf("Error getting collection names: %s", err.Error()))
 		return
 	}
 
@@ -351,7 +358,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	// Get collection name, return error if one isn't passed
 	collName := ctx.Param("name")
 	if collName == "" {
-		ctx.String(http.StatusBadRequest, "Collection name was not passed")
+		writeError(ctx, http.StatusBadRequest, "Collection name was not passed")
 		return
 	}
 
@@ -364,7 +371,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	}
 	limit, err := strconv.Atoi(limitString)
 	if err != nil {
-		ctx.String(http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
+		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
 		return
 	}
 
@@ -373,7 +380,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	// doesn't break every request that omits "limit".
 	if s.maxLimit != 0 && limit > s.maxLimit {
 		if limitPassed {
-			ctx.String(http.StatusBadRequest, "Passed limit is greater than max limit set by server")
+			writeError(ctx, http.StatusBadRequest, "Passed limit is greater than max limit set by server")
 			return
 		}
 		limit = s.maxLimit
@@ -383,7 +390,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	var filter bson.M
 	err = ctx.ShouldBindJSON(&filter)
 	if err != nil {
-		ctx.String(http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
 	}
 
@@ -394,7 +401,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	// Run find
 	cursor, err := s.mongoClient.Database(dbName).Collection(collName).Find(ctx.Request.Context(), filter, opts)
 	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Error running find: %s", err.Error())
+		writeError(ctx, http.StatusInternalServerError, fmt.Sprintf("Error running find: %s", err.Error()))
 		return
 	}
 
@@ -402,7 +409,7 @@ func (s *server) collectionFind(ctx *gin.Context) {
 	var res []map[string]any
 	err = cursor.All(ctx.Request.Context(), &res)
 	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Error decoding results: %s", err.Error())
+		writeError(ctx, http.StatusInternalServerError, fmt.Sprintf("Error decoding results: %s", err.Error()))
 		return
 	}
 
@@ -424,7 +431,7 @@ func (s *server) collectionCount(ctx *gin.Context) {
 	// Get collection name, return error if one isn't passed
 	collName := ctx.Param("name")
 	if collName == "" {
-		ctx.String(http.StatusBadRequest, "Collection name was not passed")
+		writeError(ctx, http.StatusBadRequest, "Collection name was not passed")
 		return
 	}
 
@@ -432,14 +439,14 @@ func (s *server) collectionCount(ctx *gin.Context) {
 	var filter bson.M
 	err := ctx.ShouldBindJSON(&filter)
 	if err != nil {
-		ctx.String(http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
 	}
 
 	// Run find
 	count, err := s.mongoClient.Database(dbName).Collection(collName).CountDocuments(ctx.Request.Context(), filter)
 	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Error running find: %s", err.Error())
+		writeError(ctx, http.StatusInternalServerError, fmt.Sprintf("Error running find: %s", err.Error()))
 		return
 	}
 
@@ -462,7 +469,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	// Get collection name, return error if one isn't passed
 	collName := ctx.Param("name")
 	if collName == "" {
-		ctx.String(http.StatusBadRequest, "Collection name was not passed")
+		writeError(ctx, http.StatusBadRequest, "Collection name was not passed")
 		return
 	}
 
@@ -475,7 +482,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	}
 	limit, err := strconv.Atoi(limitString)
 	if err != nil {
-		ctx.String(http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
+		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Limit is not an int: %s", err.Error()))
 		return
 	}
 
@@ -484,7 +491,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	// doesn't break every request that omits "limit".
 	if s.maxLimit != 0 && limit > s.maxLimit {
 		if limitPassed {
-			ctx.String(http.StatusBadRequest, "Passed limit is greater than max limit set by server")
+			writeError(ctx, http.StatusBadRequest, "Passed limit is greater than max limit set by server")
 			return
 		}
 		limit = s.maxLimit
@@ -494,7 +501,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	var reqBody map[string]any
 	err = ctx.ShouldBind(&reqBody)
 	if err != nil {
-		ctx.String(http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
+		writeError(ctx, http.StatusBadRequest, fmt.Sprintf("Error reading body request: %s", err.Error()))
 		return
 	}
 
@@ -509,7 +516,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 		var ok bool
 		pipeLine, ok = rawPipeline.([]any)
 		if !ok {
-			ctx.String(http.StatusBadRequest, "Aggregate field must be an array")
+			writeError(ctx, http.StatusBadRequest, "Aggregate field must be an array")
 			return
 		}
 		break
@@ -526,7 +533,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 
 	cursor, err := s.mongoClient.Database(dbName).Collection(collName).Aggregate(ctx.Request.Context(), pipeLine, opts)
 	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Error running aggregate: %s", err.Error())
+		writeError(ctx, http.StatusInternalServerError, fmt.Sprintf("Error running aggregate: %s", err.Error()))
 		return
 	}
 
@@ -534,7 +541,7 @@ func (s *server) collectionAggregate(ctx *gin.Context) {
 	var res []map[string]any
 	err = cursor.All(ctx.Request.Context(), &res)
 	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Error decoding results: %s", err.Error())
+		writeError(ctx, http.StatusInternalServerError, fmt.Sprintf("Error decoding results: %s", err.Error()))
 		return
 	}
 

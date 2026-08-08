@@ -140,6 +140,15 @@ server-wide default (`FindLimit`) and max (`FindMaxLimit`) if configured (see
 [`Options`](#options) below). For `aggregate`, the limit is applied as a `$limit` stage
 appended to the end of the caller's pipeline.
 
+### Error responses
+
+Every `/api/...` route returns a JSON envelope on failure, `{"error": "<message>"}`,
+with a non-2xx status code — for example a missing `database` param on
+`/api/collections` returns `400` with body `{"error": "Database name was not passed, one is needed"}`.
+This applies to validation errors (bad input) as well as errors surfaced from MongoDB
+itself (e.g. connection failures). See [CHANGELOG.md](CHANGELOG.md) for the release this
+landed in — earlier versions returned a plain-text body instead.
+
 ## Options
 
 `gomongoapi.ServerOptions()` returns an `*Options` populated with defaults, which can then
@@ -173,7 +182,7 @@ server.AddCustomGET("/appUsersCount", func(ctx *gin.Context) {
 
 	count, err := client.Database("app").Collection("users").CountDocuments(ctx.Request.Context(), bson.M{})
 	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Error running count: "+err.Error())
+		ctx.JSON(http.StatusInternalServerError, bson.M{"error": "Error running count: " + err.Error()})
 		return
 	}
 
