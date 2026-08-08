@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -336,9 +337,8 @@ func TestStart_Success(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		// Start() blocks serving HTTP until an error occurs; there's no
-		// graceful-shutdown hook on the Server interface, so this goroutine
-		// is intentionally left running for the rest of the test binary.
+		// Start() blocks serving HTTP until a shutdown signal arrives or an
+		// error occurs.
 		errCh <- srv.Start()
 	}()
 
@@ -350,6 +350,81 @@ func TestStart_Success(t *testing.T) {
 		require.NotNil(t, client)
 		assert.NoError(t, client.Ping(context.Background(), nil))
 	}
+
+	// Signal the running server so its goroutine doesn't outlive the test;
+	// TestStart_GracefulShutdown covers the shutdown behavior itself.
+	require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
+
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() did not return after SIGTERM")
+	}
+}
+
+func TestStart_GracefulShutdown(t *testing.T) {
+	requireMongo(t)
+
+	opts := ServerOptions()
+	opts.SetMongoClientOpts(options.Client().ApplyURI(sharedMongoURI))
+	opts.SetAddress("127.0.0.1:0")
+
+	srv := NewServer(opts)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
+
+	// Give Start() time to connect, register its SIGTERM handler, and start
+	// serving before signalling shutdown.
+	select {
+	case err := <-errCh:
+		t.Fatalf("Start() returned before shutdown was requested: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	client := srv.GetMongoClient()
+	require.NotNil(t, client)
+	require.NoError(t, client.Ping(context.Background(), nil))
+
+	require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
+
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err, "Start() should return nil after a graceful shutdown")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() did not return after SIGTERM")
+	}
+
+	// The deferred Mongo disconnect should have run as part of shutdown.
+	assert.Error(t, client.Ping(context.Background(), nil))
+}
+
+func TestStart_ConnectTimeout(t *testing.T) {
+	// 192.0.2.0/24 is reserved for documentation (RFC 5737) and never
+	// responds, so Connect/Ping only return once our own connectTimeout
+	// fires rather than because of a connection refusal.
+	opts := ServerOptions()
+	opts.SetMongoClientOpts(
+		options.Client().
+			ApplyURI("mongodb://192.0.2.1:27017").
+			SetServerSelectionTimeout(30 * time.Second).
+			SetConnectTimeout(30 * time.Second),
+	)
+
+	srv, ok := NewServer(opts).(*server)
+	require.True(t, ok)
+	srv.connectTimeout = 300 * time.Millisecond
+	srv.shutdownTimeout = defaultShutdownTimeout
+
+	start := time.Now()
+	err := srv.Start()
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Less(t, elapsed, 5*time.Second, "Start() should have aborted via connectTimeout, not the driver's own 30s timeout")
 }
 
 // ---- getDatabases ----

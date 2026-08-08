@@ -44,7 +44,8 @@ func main() {
 	// Create server
 	server := gomongoapi.NewServer(serverOpts)
 
-	// Start server, blocks until an error occurs
+	// Start server, blocks until SIGINT/SIGTERM triggers a graceful shutdown
+	// or an error occurs
 	log.Fatal(server.Start())
 }
 ```

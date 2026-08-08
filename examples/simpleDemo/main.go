@@ -60,7 +60,8 @@ func main() {
 		ctx.JSON(http.StatusOK, bson.M{"Count": count})
 	})
 
-	// Start server, blocks until an error occurs
+	// Start server, blocks until SIGINT/SIGTERM triggers a graceful shutdown
+	// or an error occurs
 	log.Fatal(server.Start())
 }
 
