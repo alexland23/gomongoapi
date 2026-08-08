@@ -1,3 +1,7 @@
+# Demo only — not for production. No auth on the gomongoapi /api routes, Grafana runs
+# with its default admin/admin login, and every service is published on the host network.
+# See the "Security" section of the root README before deploying anything like this.
+
 volumes:
   mongodb-data:
   mongodb-config-data:

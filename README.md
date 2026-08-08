@@ -64,6 +64,63 @@ docker-compose up
 
 Then open Grafana at http://localhost:3000 (default login `admin` / `admin`).
 
+> **Not for production.** This demo runs `/api` with no auth middleware and Grafana on
+> the default `admin` / `admin` login, all published on the host network. It's shaped for
+> a quick local look, not as a template for a real deployment — see [Security](#security).
+
+## Security
+
+`gomongoapi` gives a caller direct, unauthenticated access to whatever Mongo credentials
+you configure it with. It has no built-in auth, and the API is **not read-only**:
+`aggregate` passes the caller-supplied pipeline straight to the driver with no stage
+filtering, so a pipeline containing `$out` or `$merge` can write to or overwrite
+collections, and `find`/`count` filters are passed through as-is, so operators like
+`$where` or `$function` can execute server-side JavaScript depending on your MongoDB
+version and configuration. Treat this as a query surface with write potential, not a
+read-only reporting endpoint, and take the following seriously before exposing it
+anywhere besides `localhost`.
+
+### Use a read-only Mongo user
+
+Point `MongoClientOpts` at a connection string scoped to a Mongo user with `read` (not
+`readWrite`) on only the databases you intend to expose. This is the control that
+actually stops `$out`/`$merge`/`$where` from doing damage — everything else here is
+defense in depth on top of it.
+
+### No built-in auth
+
+`gomongoapi` does not authenticate requests itself. Use `SetAPIMiddleware` to add your
+own check in front of every `/api` route, for example a shared API key:
+
+```go
+const apiKey = "replace-with-a-securely-generated-key" // load from env/secrets, don't hardcode
+
+server.SetAPIMiddleware(func(ctx *gin.Context) {
+	if ctx.GetHeader("X-API-Key") != apiKey {
+		ctx.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+	ctx.Next()
+})
+```
+
+`SetCustomMiddleware` is the equivalent hook for the `/custom` route group; apply the
+same kind of check there if you add custom routes.
+
+### Network boundary
+
+Don't publish the server's port directly to the internet. Put it behind a reverse proxy
+(for TLS termination and a single controlled entry point) or keep it on a private
+network reachable only by the Grafana instance querying it — ideally both.
+
+### Rate limiting
+
+`gomongoapi` doesn't ship any rate limiting. If the server is reachable by more than a
+trusted internal caller, add a rate-limiting gin middleware (e.g.
+[`ulule/limiter`](https://github.com/ulule/limiter) or
+[`gin-contrib/timeout`](https://github.com/gin-contrib/timeout)-style approaches) via
+`SetAPIMiddleware`.
+
 ## Default routes
 
 | Path                                | HTTP Verb | Body  | Result                                                                                                |
